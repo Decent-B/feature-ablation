@@ -1,0 +1,28 @@
+# Step 0 pre-pilot check: PREREGISTERED decision rule.
+# The SHA-256 of this file is written into runs/check/decision.json. After a decision
+# exists, rerunning the check with a changed file is refused unless --force is passed,
+# and the pilot refuses to start if this file no longer matches the decision's hash.
+
+model: Qwen/Qwen3-1.7B            # the only model the check downloads or runs
+
+dataset:
+  # geometry-of-truth cities.csv, pinned to a commit; fetched as one raw file
+  url: https://raw.githubusercontent.com/saprmarks/geometry-of-truth/5d1c630c44f7e50bda7ad86d601ccadf9abc5ddb/datasets/cities.csv
+  expected_rows: 1496
+
+# The pilot's truth template (user turn). config/pilot.yaml must use the same string.
+template: "Answer with True or False only.\nStatement: {statement}"
+
+thresholds:                       # all three on point estimates
+  auroc: 0.90                     # AUROC of m(x) = logit(True) - logit(False) vs label
+  accuracy: 0.80                  # sign of m(x) at the fixed threshold 0 (never tuned)
+  coherence: 0.90                 # mean P(True) + P(False) at the first response position
+
+on_pass: Qwen/Qwen3-1.7B
+on_fail: Qwen/Qwen3.5-4B          # documented manual contingency: Qwen/Qwen3-8B (edit + --force)
+
+format_check: {n: 8, max_new_tokens: 8}
+batch_size: 256
+bootstrap: 1000
+seed: 0
+smoke_n: 64                       # --check --smoke: statements used (writes decision_smoke.json only)

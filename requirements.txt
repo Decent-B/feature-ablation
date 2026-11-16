@@ -1,0 +1,7 @@
+# Full pilot (torch is installed separately from the cu130 index by run_pilot.sh).
+# Never add CUDA 12 builds (e.g. *-cu12 packages, flash-attn): the GB10 has CUDA 13 runtimes only.
+-r requirements-check.txt
+pandas==3.1.1
+pyarrow==26.0.1
+matplotlib==3.11.2
+pytest==9.2.0

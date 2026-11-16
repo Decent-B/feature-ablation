@@ -1,0 +1,22 @@
+# Overrides for `bash run_pilot.sh --smoke` (deep-merged over pilot.yaml).
+# Qwen3-1.7B is forced; the Step 0 decision is neither read nor written.
+
+model: Qwen/Qwen3-1.7B
+models:
+  Qwen/Qwen3-1.7B:
+    sae: {width: 16384, l0: 80}   # trainer_0
+budgets: [1, 10, 100]
+discovery_resamples: 1
+random_draws: 1
+bootstrap: 50
+data:
+  smoke_n: 32                     # examples per split and set (per class for refusal)
+  generic: {n_fit: 32, n_cost: 32}
+gate:
+  calib_n: 32
+  calib_tokens: 24
+  eval_label_tokens: 24
+sae_check: {n_prompts: 48}
+pca: {n_tokens: 6000}
+generation_check: {n_prompts: 8, max_new_tokens: 16}
+batch_size: 32

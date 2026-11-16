@@ -1,0 +1,6 @@
+# Step 0 check only (torch is installed separately from the cu130 index by run_pilot.sh)
+transformers==5.23.0
+safetensors==0.8.0
+huggingface_hub==2.4.0
+numpy==2.5.5
+pyyaml==6.0.3
