@@ -186,11 +186,22 @@ def make_hook(basis, idx: np.ndarray, strategy: str, means: torch.Tensor, runner
 def identity_check(ctx: Ctx, runner: TaskRunner, B: dict, rankings: pd.DataFrame, tol: float) -> dict:
     """Ablate with v_i = r_i(x), where r comes from the separately cached clean activations,
     on the full model forward: logits must not move (bf16 tolerance)."""
-    n = min(32, len(runner.ev))
-    sub = ctx.batches(list(runner.ev.input_ids[:n]))
+    # Reuse the runner's eval batches: they have exactly the batch composition/padding the cache
+    # stage used, so cached activations match the live forward bit-for-bit (re-batching a subset
+    # changes padding/shapes and hence bf16 numerics, which fails the check spuriously).
+    sub, n = [], 0
+    for b in runner.eval_b:
+        sub.append(b)
+        n += len(b.idx)
+        if n >= 32:
+            break
+    rows = np.concatenate([b.idx for b in sub])
     clean = runner.full_logits(sub)
-    ev_int = runner.cache["eval_int"][:n].to(ctx.device)
-    ev_mlp = runner.cache["eval_mlp"][:n].to(ctx.device) if runner.cache["eval_mlp"] is not None else None
+    N = len(runner.ev)
+    ev_int = runner.cache["eval_int"][torch.as_tensor(rows)].to(ctx.device)
+    ev_mlp = runner.cache["eval_mlp"][torch.as_tensor(rows)].to(ctx.device) if runner.cache["eval_mlp"] is not None else None
+    src_index = torch.zeros(N, dtype=torch.long)
+    src_index[torch.as_tensor(rows)] = torch.arange(len(rows))
     kmax = max(int(k) for k in ctx.cfg["budgets"])
     res = {}
     for key, basis in B.items():
@@ -206,14 +217,13 @@ def identity_check(ctx: Ctx, runner: TaskRunner, B: dict, rankings: pd.DataFrame
         with torch.inference_mode():
             vals = basis.read_sel(ev_int.float(), None if ev_mlp is None else ev_mlp.float(), idx_t)
         hook = M.AblationHook(runner.T, basis.directions(idx_t).float(), basis.reader(idx_t), values_src=vals,
-                              src_index=np.arange(n), needs_mlp=basis.needs_mlp)
+                              src_index=src_index, needs_mlp=basis.needs_mlp)
         was = runner.fast
         runner.fast = False
         diffs = []
         try:
             def col(b, logits, hk):
                 diffs.append(float((logits - clean[id(b)]).abs().max()))
-            hook.src_index = torch.arange(n)
             handles = M.attach_hook(ctx.layers, runner.L, hook, False)
             try:
                 with torch.inference_mode():
