@@ -300,6 +300,13 @@ unchanged; v1 modes behave as before.
     Qwen3-1.7B 15696 -> 7862 (16.4 GB, ~1% slower). Recorded in the file as `manual_override`. Batch size is a
     harness setting: attribution gradients are per example and summed, so results do not depend on it beyond
     floating-point order; no frozen file is touched. The confirm run resumes; finished stages are kept.
+26. **Confirm time budget raised to 18 h so B4 and B5 run** (`src/pilot/ablate_v2.py`, 2026-11-19). New operator
+    override `PILOT_V2_CONFIRM_HOURS=<h>` for the time guard's confirm budget (the frozen `config/v2.yaml` gives
+    12 h minus the dev run = 11.04 h). With that budget the guard would have skipped B4_refusal_s2_resample and
+    B5_tier2_40_60 after B3 (~9.1 h used, ~6 h still needed). The run was stopped during B3 and resumed with
+    `PILOT_V2_CONFIRM_HOURS=18`; finished chunks are kept. The guard only decides which preregistered blocks run, in
+    the preregistered priority order; it never changes how a block is computed, so B1-B3 results are unaffected and
+    B4/B5 are computed exactly as planned. The budget used is recorded as `budget_source` in `ablate/blocks.json`.
 
 ## Verification status
 

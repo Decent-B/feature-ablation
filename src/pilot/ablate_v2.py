@@ -387,6 +387,9 @@ def budget_seconds(run: RunCtx) -> tuple[float, str]:
     b = run.cfg["budget"]
     if run.phase != "confirm":
         return float(b["total_hours"]) * 3600, f"total_hours={b['total_hours']}"
+    env_h = os.environ.get("PILOT_V2_CONFIRM_HOURS")   # operator override (speed only: decides which blocks run)
+    if env_h:
+        return float(env_h) * 3600, f"PILOT_V2_CONFIRM_HOURS={env_h} (operator override)"
     if b.get("confirm_hours") is not None:
         return float(b["confirm_hours"]) * 3600, f"confirm_hours={b['confirm_hours']}"
     from .v2common import V2_RUNS
