@@ -292,6 +292,14 @@ unchanged; v1 modes behave as before.
     `DECODE_TIE_TOL = 0.5` of the top logit; the report records `near_ties` and `max_logit_gap`. An edit that does
     not reach the cache still fails the check (wide or repeated disagreements). The fp32 unit test keeps exact
     token agreement.
+25. **Backward batch lowered for the confirmatory run** (`runs/v2/tuning.json`, 2026-11-19). The first confirm run was
+    aborted by the memory watchdog in `prep:qwen3.5-4b` (refusal discovery forward+backward, MemAvailable 15.3 GB):
+    the smoke-tuned backward batch (7785 tokens, 42.8 GB peak measured alone) leaves too little room once prep's
+    accumulators for 5 layers, the other loaded model and other users' processes are added. `grad_batch_tokens`
+    set by hand to the next-smaller measured candidate: Qwen3.5-4B 7785 -> 3899 (27.3 GB, ~3% slower backward),
+    Qwen3-1.7B 15696 -> 7862 (16.4 GB, ~1% slower). Recorded in the file as `manual_override`. Batch size is a
+    harness setting: attribution gradients are per example and summed, so results do not depend on it beyond
+    floating-point order; no frozen file is touched. The confirm run resumes; finished stages are kept.
 
 ## Verification status
 
