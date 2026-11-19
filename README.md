@@ -145,6 +145,19 @@ substitute) and a second model (Qwen3.5-4B), extends every curve to the comparis
 into a development run and a preregistered confirmatory run. v1 modes and outputs are unchanged; the v1 run
 `20261116-180218-pilot-qwen3-1.7b/` is archived as "v1, superseded" and is never read by v2.
 
+### One command
+
+```bash
+bash run_v2.sh            # every step below, in the background (you can close the terminal)
+bash run_v2.sh --status   # progress, and the summary when it finishes or stops
+bash run_v2.sh --stop     # stop; finished work is kept
+```
+
+`run_v2.sh` runs the commands below in order, with the preregistration finalised as drafted (it sets
+`status: final`, renders, commits and freezes). It stops at the first error, including a failed smoke check,
+and says why; after fixing the cause, `bash run_v2.sh` continues from that step. Only the downloads are retried
+(3 tries). Log: `runs/v2/pipeline/run_v2.log`; summary: `runs/v2/pipeline/SUMMARY.txt`.
+
 ### Order of commands
 
 ```bash

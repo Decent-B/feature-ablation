@@ -191,6 +191,7 @@ unchanged; v1 modes behave as before.
 | `src/pilot/budget_v2.py` | Batch auto-tuning under the memory cap, throughput, per-intervention and per-block projections |
 | `src/pilot/prefetch_v2.py` | Downloads every model, SAE file and dataset the full run needs; reports what is missing |
 | `src/pilot/smoke_v2.py` | In-run checks (identity at both sites incl. decoding, decode-cache consistency, zero cost for a no-op, curve extension, role means / reservoirs) and post-run acceptance; `smoke_report.md` |
+| `run_v2.sh` | The whole v2 sequence in one command, in the background: downloads (3 tries), smoke, dev, finalise (`status: final`) + render + commit + freeze, confirm. Stops at the first error (a failed smoke check counts) with the reason; rerunning continues from that step. `--status`, `--stop`, `--foreground` |
 | `src/pilot/cli_v2.py` | v2 orchestration: phases, stages with DONE markers, `--resume`, prereg enforcement |
 | `src/pilot/devtiny_v2.py` | Developer plumbing test: tiny random Qwen3 and hybrid Qwen3.5 with real tokenizers, SAEs in both layouts |
 | `tests/test_v2_sites.py` | Hook formula and masks, identity, joint resample copy, S1 / S2 decode behaviour, decode-cache consistency on both architectures, multi-layer gradients, attribution identity |
