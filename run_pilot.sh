@@ -8,14 +8,28 @@
 #   bash run_pilot.sh --resume        continue the latest run (skips stages with a DONE marker)
 #   bash run_pilot.sh --out DIR       choose the run directory
 #   bash run_pilot.sh --check --force rerun the check after config/check.yaml changed (recorded)
+#
+# v2 (pilot-v2-amendment.md); runs land in runs/v2/<phase>/<run_id>/:
+#   bash run_pilot.sh --v2 --prefetch        download every model, SAE file and dataset the full run needs
+#   bash run_pilot.sh --v2 --smoke           prefetch, then every stage on tiny data + checks + projections
+#   bash run_pilot.sh --v2 --dev             development run (Qwen3-1.7B truth + refusal, 50% depth)
+#   bash run_pilot.sh --v2 --render-prereg   regenerate prereg/PREREGISTRATION.md from prereg/hypotheses.yaml
+#   bash run_pilot.sh --v2 --freeze          hash, commit and tag the preregistration
+#   bash run_pilot.sh --v2 --confirm [--deviation "<reason>"]   confirmatory run (needs a valid freeze)
+#   add --resume (or --out DIR) to continue a v2 run
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 CHECK=0; SMOKE=0; RESUME=0; FORCE=0; DEV=0; OUT=""
+V2=0; V2MODE=""; DEVIATION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --v2) V2=1 ;;
+    --prefetch|--dev|--freeze|--confirm|--render-prereg) V2MODE="${1#--}" ;;
+    --deviation) DEVIATION="${2:?--deviation needs a reason}"; shift ;;
+    --deviation=*) DEVIATION="${1#--deviation=}" ;;
     --check) CHECK=1 ;;
     --smoke) SMOKE=1 ;;
     --resume) RESUME=1 ;;
@@ -23,13 +37,25 @@ while [[ $# -gt 0 ]]; do
     --dev-tiny) DEV=1 ;;                     # developer plumbing test (tiny random model)
     --out) OUT="${2:?--out needs a directory}"; shift ;;
     --out=*) OUT="${1#--out=}" ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)"; exit 2 ;;
   esac
   shift
 done
 
 log() { echo "[run_pilot $(date +%H:%M:%S)] $*"; }
+
+if [[ $V2 -eq 1 ]]; then
+  [[ $SMOKE -eq 1 ]] && V2MODE="smoke"
+  [[ -n "$V2MODE" ]] || { echo "--v2 needs one of --prefetch --smoke --dev --render-prereg --freeze --confirm"; exit 2; }
+  [[ $CHECK -eq 0 ]] || { echo "--check is a v1 mode; do not combine it with --v2"; exit 2; }
+  [[ -z "$DEVIATION" || "$V2MODE" == "confirm" ]] || { echo "--deviation applies to --v2 --confirm only"; exit 2; }
+elif [[ -n "$V2MODE" || -n "$DEVIATION" ]]; then
+  echo "--$V2MODE / --deviation are v2 modes: add --v2"; exit 2
+fi
+CPU_OK=0
+[[ $SMOKE -eq 1 || $DEV -eq 1 ]] && CPU_OK=1
+[[ $V2 -eq 1 && "$V2MODE" =~ ^(prefetch|freeze|render-prereg)$ ]] && CPU_OK=1
 
 # ------------------------------------------------------------------ environment for Python
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas      # Triton (incl. Gated DeltaNet kernels) on sm_121
@@ -47,7 +73,7 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then HAV
 if [[ $HAVE_GPU -eq 1 ]]; then
   TORCH_INDEX="https://download.pytorch.org/whl/cu130"
   [[ "$(uname -m)" == "aarch64" ]] || log "note: $(uname -m) host; the target is the aarch64 GB10"
-elif [[ $SMOKE -eq 1 || $DEV -eq 1 ]]; then
+elif [[ $CPU_OK -eq 1 ]]; then
   TORCH_INDEX="https://download.pytorch.org/whl/cpu"
   log "WARNING: no NVIDIA GPU visible. Using CPU torch: the CPU path exists ONLY for the smoke check."
 else
@@ -83,7 +109,7 @@ if [[ ! -f "$CHECK_STAMP" || ( $NEED_FULL -eq 1 && ! -f "$FULL_STAMP" ) ]]; then
   uv pip install --python "$PY" --quiet "huggingface_hub==2.4.0"
   # start the model download now, overlapped with the PyTorch install
   KIND=pilot; [[ $CHECK -eq 1 ]] && KIND=check; [[ $SMOKE -eq 1 ]] && KIND=smoke
-  if [[ $DEV -eq 0 ]]; then
+  if [[ $DEV -eq 0 && $V2 -eq 0 ]]; then
     mkdir -p runs
     "$PY" -m pilot.prefetch "$KIND" > runs/.prefetch.log 2>&1 &
     PREFETCH_PID=$!
@@ -107,6 +133,18 @@ if [[ -n "$PREFETCH_PID" ]]; then
   wait "$PREFETCH_PID" || log "prefetch failed (see runs/.prefetch.log); the stages will retry the download"
 fi
 
+# v2 only: Triton Gated DeltaNet kernels for Qwen3.5-4B (pure Python + Triton, no CUDA 12 build). Best effort;
+# the model falls back to the pure-PyTorch implementation without them. PILOT_V2_FLA=0 skips this.
+FLA_STAMP=".venv/.stamp-fla-0.6.0"
+if [[ $V2 -eq 1 && $HAVE_GPU -eq 1 && "${PILOT_V2_FLA:-1}" != "0" && ! -f "$FLA_STAMP" ]]; then
+  log "installing flash-linear-attention 0.6.0 (Triton kernels for the Qwen3.5 Gated DeltaNet layers; best effort)"
+  if uv pip install --python "$PY" --quiet "flash-linear-attention==0.6.0" "fla-core==0.6.0" einops; then
+    touch "$FLA_STAMP"
+  else
+    log "WARNING: flash-linear-attention did not install; Qwen3.5-4B will use the slower PyTorch fallback"
+  fi
+fi
+
 # ------------------------------------------------------------------ memory safety (unified memory)
 MEM_TOTAL_GB=$(awk '/MemTotal/ {printf "%d", $2/1048576}' /proc/meminfo)
 if [[ $MEM_TOTAL_GB -ge 116 ]]; then MEMMAX=100G; else MEMMAX="$(( MEM_TOTAL_GB * 85 / 100 ))G"; fi
@@ -123,6 +161,32 @@ else
 fi
 
 run_py() { "${PREFIX[@]}" "$PY" -m pilot.cli "$@"; }
+run_v2() { "${PREFIX[@]}" "$PY" -m pilot.cli_v2 "$@"; }
+
+# ------------------------------------------------------------------ v2 dispatch
+if [[ $V2 -eq 1 ]]; then
+  VARGS=("--$V2MODE")
+  [[ $RESUME -eq 1 ]] && VARGS+=(--resume)
+  [[ -n "$OUT" ]] && VARGS+=(--out "$OUT")
+  [[ $DEV -eq 1 ]] && VARGS+=(--dev-tiny)
+  [[ -n "$DEVIATION" ]] && VARGS+=(--deviation "$DEVIATION")
+  if [[ "$V2MODE" != "smoke" ]]; then
+    run_v2 "${VARGS[@]}"
+    exit $?
+  fi
+  T0=$(date +%s)
+  set +e
+  run_v2 "${VARGS[@]}"
+  RC=$?
+  set -e
+  RUN_DIR="$(cat runs/v2/smoke/.last 2>/dev/null || true)"
+  log "v2 smoke run finished with exit code $RC in $(( $(date +%s) - T0 )) s: $RUN_DIR"
+  [[ $RC -eq 0 && -n "$RUN_DIR" ]] || exit $RC
+  log "v2 acceptance checks (pytest, identity incl. decoding, zero cost, extension, freeze enforcement, prefetch, projection)"
+  CARGS=(--verify-smoke --out "$RUN_DIR"); [[ $DEV -eq 1 ]] && CARGS+=(--dev-tiny)
+  run_v2 "${CARGS[@]}"
+  exit $?
+fi
 
 # ------------------------------------------------------------------ dispatch
 ARGS=()

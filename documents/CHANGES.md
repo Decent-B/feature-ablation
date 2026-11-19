@@ -161,3 +161,124 @@ Generated at run time (not source): `.venv/`, `data_cache/` (raw datasets), `run
   - The Qwen3.5-4B / REINS path; its loader follows REINS' own runtime but no checkpoint was downloaded.
 
   Run `bash run_pilot.sh --smoke` on the GB10 before the full run.
+
+---
+
+# v2 (pilot-v2-amendment.md)
+
+Everything below implements `pilot-v2-amendment.md` on top of v1. v1 modules, configs and run outputs are
+unchanged; v1 modes behave as before.
+
+## Files created
+
+| File | Purpose |
+|---|---|
+| `config/v2.yaml` | All v2 settings: models and depths, tasks and templates, data, pairs, gates, SAE inclusion, tiers, extension, controls, cost, blocks, budget, batching; `phases:` overrides for dev, smoke and dev-tiny |
+| `prereg/hypotheses.yaml` | DRAFT preregistration (machine-readable): metric, c0, delta, C1–C3, secondary S1–S5, inclusion rules, pairs, H0, run plan |
+| `prereg/PREREGISTRATION.md` | Human-readable preregistration rendered from the YAML (`--v2 --render-prereg`) |
+| `src/pilot/v2common.py` | Config loading with phase overrides, the layer rule, v2 paths, pair helpers |
+| `src/pilot/data_v2.py` | Model-independent text splits for all five tasks (v1 split code reused for truth / refusal / generic), per-model tokenization |
+| `src/pilot/sites.py` | The v2 hook: prompt / generated roles, S1 / S2, first-token, sink and padding exclusion, mean / resample / identity values, decode-step editing, multi-layer capture and gradients |
+| `src/pilot/sae_v2.py` | Per-layer SAE resolution for both release layouts (hub or local), input normalisation modes |
+| `src/pilot/engine_v2.py` | Run / model contexts, generation with the hook active, the TaskRunner (damage pass, teacher-forced 9-position cost, fast path, clean references, resample tables) |
+| `src/pilot/gate_v2.py` | Per-model gate: format check, answer tokens, task baselines and inclusion gate, refusal labels and eval set, sink thresholds, SAE fidelity; run-level inclusion with the toxicity substitution |
+| `src/pilot/prep_v2.py` | Generic continuations, PCA per depth, one forward + backward per discovery example at all depths, rankings (incl. shuffled-label attribution), means per role, anchors, reservoirs, C3 groups, stability |
+| `src/pilot/ablate_v2.py` | Blocks in priority order, cells, curves with extension, controls, resumable chunks, the 12-hour time guard, background analysis workers, the 32- vs 64-token agreement check |
+| `src/pilot/analysis_v2.py` | Frozen analysis: per-intervention bootstrap caches, D(c) and E(c) at fixed costs, C1–C3, S1–S5, H0, G, results table |
+| `src/pilot/report_v2.py` | `analyze` stage: confirmatory.json first, then secondary / development / exploratory, plots, `report_v2.md` or `dev_report.md` |
+| `src/pilot/plots_v2.py` | Primary-setting curves, E heatmaps, Δ by depth, C3 scatter |
+| `src/pilot/prereg.py` | Render, freeze (hash, commit, tag), verify and deviation recording |
+| `src/pilot/budget_v2.py` | Batch auto-tuning under the memory cap, throughput, per-intervention and per-block projections |
+| `src/pilot/prefetch_v2.py` | Downloads every model, SAE file and dataset the full run needs; reports what is missing |
+| `src/pilot/smoke_v2.py` | In-run checks (identity at both sites incl. decoding, decode-cache consistency, zero cost for a no-op, curve extension, role means / reservoirs) and post-run acceptance; `smoke_report.md` |
+| `src/pilot/cli_v2.py` | v2 orchestration: phases, stages with DONE markers, `--resume`, prereg enforcement |
+| `src/pilot/devtiny_v2.py` | Developer plumbing test: tiny random Qwen3 and hybrid Qwen3.5 with real tokenizers, SAEs in both layouts |
+| `tests/test_v2_sites.py` | Hook formula and masks, identity, joint resample copy, S1 / S2 decode behaviour, decode-cache consistency on both architectures, multi-layer gradients, attribution identity |
+| `tests/test_v2_analysis.py` | C1 / C2 / random floor on synthetic runs with known answers, curve extension, tie-aware Spearman, inclusion / substitution, seeding |
+| `tests/test_v2_prereg.py` | Freeze / verify / deviation on a throwaway git repository; the rendered prereg is in sync |
+
+## Files modified
+
+| File | Change |
+|---|---|
+| `run_pilot.sh` | `--v2` with `--prefetch`, `--smoke`, `--dev`, `--render-prereg`, `--freeze`, `--confirm`, `--deviation`; v2 smoke runs the acceptance checks; best-effort install of `flash-linear-attention` 0.6.0 (Triton) on the GPU path for v2 |
+| `README.md` | v2 section: order of commands, what the freeze does and why, runtime per phase, blocks, how to read `report_v2.md` |
+| `CHANGES.md` | This v2 section |
+| `.gitignore` | Adds `__pycache__/`, `*.pyc` and `runs/` |
+| git index | The tracked `__pycache__/*.pyc` files are removed from the index (staged, not committed): every Python run changed them, so the freeze's clean-tree check could never pass |
+
+## Deviations from the amendment, and why
+
+**Process and preregistration**
+
+1. **`--render-prereg` mode added.** PREREGISTRATION.md is generated from the YAML; the freeze refuses if the two
+   are out of sync, so the human-readable and machine-readable versions cannot diverge.
+2. **Draft choice flagged for review: `require_bh_q: true`.** The amendment's C1 / C2 "supported if" columns do not
+   mention q-values, but BH correction is required within each family. The draft makes a per-pair test also need
+   BH q ≤ 0.05; set it to `false` in `hypotheses.yaml` to use the CI conditions alone.
+3. **C2 test form.** Each unordered basis pair and readout rule is one test: a reversal needs both CIs to exclude 0
+   with readout favouring one basis and attribution the other (equivalent to the amendment's ordered definition);
+   p = the larger of the two bootstrap p-values.
+4. **Freeze details.** Untracked files do not block the freeze (only changes to tracked files, and frozen files
+   that are not committed). An existing `prereg-v2-frozen` tag blocks a second freeze. With no freeze at all,
+   `--deviation` cannot bypass the refusal.
+5. **Frozen analysis code** is `analysis_v2.py` and `stats.py`. The analysis carries its own copy of the seeding
+   helper so it does not depend on the unfrozen `utils.py`.
+6. **Confirm budget** = 12 h minus the latest finished dev run's stage time (0.6 h assumed if none). When the guard
+   stops, the blocked block and every later one are skipped and listed.
+
+**Sites, values and metrics**
+
+7. **SAE layer indexing and input scaling come from the model cards; no reconstruction check.** Both releases
+   state the setting: file N = output of decoder layer N (0-indexed), no input scaling (adamkarvonen: `config.json`
+   `"submodule_name": "resid_post_layer_N"`, `"io": "out"`; REINS: model card "post-residual stream of transformer
+   layer XX", the authors' code hooks `model.layers[N]` and feeds raw activations, and the card's global-RMS training
+   normalisation is folded into the saved file by `dictionary_learning`). The setting is written explicitly in
+   `config/v2.yaml` with these sources. Deviation from "confirm indexing by reconstruction, not from the filename"
+   and from instruction 7 ("stop and report"): the releases document the setting, the run is single-shot, and the
+   fidelity rule (FVE ≥ 0.70, loss ≤ +10%) still drops an SAE that does not fit its layer.
+8. **Clean refusal rate** is measured through the same generation path as the ablated runs (it is ≈1.0 by
+   construction on the clean-refused set) instead of being assumed to be exactly 1.
+9. **Cost continuations** are generated with EOS suppressed for 8 tokens, so every generic prompt has exactly 9 KL
+   positions.
+10. **Generated-role values and reservoirs** are built only where they are used: generated-role means for refusal
+    (the only task run at S2), reservoirs for refusal at 50% depth (the only resample cell).
+11. **Sink threshold** per (model, depth): 10× the median residual norm of non-first tokens on generic + discovery
+    prompts; sinks are detected on the fly at every intervened token, including generated tokens.
+12. **C3 statistic.** Group readout strength is the mean |d| of its units; group damage is the raw damage D. S4(c)
+    uses −(summed attribution) so that a positive correlation means attribution predicts damage.
+13. **S4(a)** passes on the point estimate (|E(c0)| ≤ δ) and reports the CI; **S4(b)** compares each cross-task
+    intervention with the same-k attribution point, each in excess of the random curve at its own cost.
+14. **Curve extension** also applies to the shuffled-label attribution control.
+
+**Data**
+
+15. **Toxicity**: discovery from Civil Comments `validation`, eval from `test`; this avoids the 380 MB train split.
+    Comments of at most 150 tokens are selected, never truncated.
+16. **Token caps** (answerability contexts, toxic comments) use the maximum over both models' tokenizers, so the same
+    text splits serve both models.
+17. **Refusal eval**: all 572 `harmful_test` prompts are generation-labelled by each clean model; up to 200 refused
+    ones are drawn with a fixed seed; the harmless rate (gate) is measured on the 100 harmless eval prompts.
+
+**Smoke test**
+
+18. **Extension in the smoke grid is capped at 2 steps** to keep it small; a dedicated check runs one curve with a
+    1-point ladder until it reaches a reachable target and verifies it stops there.
+19. **"All v1 smoke checks"** are applied to the v2 run (pytest incl. v1 tests, NaN / Inf, outputs, `--resume` < 30 s,
+    env, watchdog, memory) and v1's `--check --smoke` is run on real-model smokes.
+20. **Developer additions** (hidden from `--help`): `--dev-tiny` and `PILOT_V2_EXTRA_CONFIG=<yaml>` (merged last,
+    recorded in the manifest, ignored by `--confirm`).
+
+## Verification status
+
+- `pytest`: 51 tests pass (30 v1 + 21 v2).
+- **Smoke on this machine** (x86_64 WSL2, no GPU, 19 GB RAM): `bash run_pilot.sh --v2 --smoke --dev-tiny` passes
+  every applicable check on tiny random versions of both architectures (Qwen3, and hybrid Qwen3.5 with the
+  PyTorch Gated DeltaNet path). Checks that need the real weights or a GPU are reported as skipped.
+- Also exercised here: the dev phase end to end (agreement check, dev report, background workers), the time guard
+  (a 60-second budget skips the second block and reports it), and freeze / confirm enforcement on a temporary copy.
+- Real downloads verified here: all datasets, both tokenizers and configs, and one REINS checkpoint
+  (`layer_16.pt`: same keys as dictionary_learning, threshold set, k = 128; loads with the v1 SAE loader).
+- **Not yet verified on real models:** gates and baselines of the new tasks, SAE fidelity on the real
+  SAEs (including the REINS base-to-instruct transfer), throughput, every GPU-only path. Run
+  `bash run_pilot.sh --v2 --smoke` on the GB10 first.

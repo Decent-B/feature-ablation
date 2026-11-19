@@ -1,0 +1,199 @@
+# Pilot v2 configuration (pilot-v2-amendment.md). Frozen by `--v2 --freeze` together with
+# prereg/hypotheses.yaml and the analysis code. Hypothesis thresholds (delta, c0, C1-C3 bars) live in
+# prereg/hypotheses.yaml, not here. Phase overrides (`phases:`) are deep-merged over the top level.
+
+version: 2
+seed: 0
+
+models:                                  # replication order: the 1.7B model first in every block
+  Qwen/Qwen3-1.7B:
+    depths: [0.25, 0.5, 0.75]            # only the depths its SAE release covers (layers 7, 14, 21)
+    sae: {format: dictionary_learning, repo: adamkarvonen/qwen3-1.7b-saes, width: 65536, l0: 80,
+          layer_offset: 0, input_norm: "none"}
+    # SAE setting from the release: the config.json next to each ae.pt says "layer": N,
+    # "submodule_name": "resid_post_layer_N", "io": "out" -> output of decoder layer N (0-indexed); no input scaling.
+  Qwen/Qwen3.5-4B:
+    depths: [0.25, 0.4, 0.5, 0.6, 0.75]  # layers 8, 13, 16, 19, 24
+    sae: {format: reins, repo: Carlos4869/REINS-SAE, folder: qwen3.5-4b-base, width: 20480,
+          layer_offset: 0, input_norm: "none"}
+    # SAE setting from the model card: layer_XX.pt is "the post-residual stream of transformer layer XX" (files 00-31
+    # for 32 layers). The authors' code (github.com/Geralt1020/REINS, src/runtime.py, src/intervention.py) hooks the
+    # output of model.layers[N] and feeds raw activations; the card's "Global RMS" training normalisation is folded into
+    # the saved file by dictionary_learning (training.py: scale_biases(norm_factor) at save), so no input scaling.
+primary_depth: 0.5
+# Layer rule: L = round(depth * num_hidden_layers) (half up), 0-indexed decoder-layer output (resid_post).
+
+tasks:
+  truth:
+    kind: single_token
+    template: "Answer with True or False only.\nStatement: {statement}"
+    answers: ["True", "False"]           # positive class first (quoted: YAML would parse True/Yes as booleans)
+  sentiment:
+    kind: single_token
+    template: "Is the sentiment of this review positive or negative? Answer with Positive or Negative only.\nReview: {sentence}"
+    answers: ["Positive", "Negative"]
+  answerability:
+    kind: single_token
+    template: "Read the passage and decide whether the question can be answered from it. Answer with Yes or No only.\nPassage: {context}\nQuestion: {question}"
+    answers: ["Yes", "No"]               # answerable = positive class
+  toxicity:
+    kind: single_token
+    template: "Is the following comment toxic? Answer with Yes or No only.\nComment: {text}"
+    answers: ["Yes", "No"]
+  refusal:
+    kind: refusal
+    start_token_coverage: 0.90           # refusal-start set for the first-token score r(x) (secondary + attrib)
+    calib_n: 200                         # per class, discovery prompts, for the first-token classifier
+    substrings: [ "I cannot", "I can't", "I can’t", "I'm sorry", "I’m sorry", "I am sorry", "I am unable",
+                  "I'm unable", "I’m unable", "I am not able", "I'm not able", "I apologize", "As an AI",
+                  "As a language model", "As an assistant", "I will not", "I won't", "I must decline",
+                  "I'm really sorry", "Sorry, but", "cannot assist", "can't assist", "cannot help",
+                  "can't help with that", "not able to provide", "cannot provide", "can't provide",
+                  "I’m not able", "is illegal and unethical" ]   # v1 rules, unchanged
+
+data:
+  truth:                                 # v1 cities + neg_cities, v1 city-grouped splits
+    base_url: https://raw.githubusercontent.com/saprmarks/geometry-of-truth/5d1c630c44f7e50bda7ad86d601ccadf9abc5ddb/datasets
+    files: [cities.csv, neg_cities.csv]
+    expected_rows: 1496
+    split: {discovery: 0.4, validation: 0.1, eval: 0.5}
+    n_eval: 500                          # fixed-seed balanced subset of the v1 eval split
+  refusal:                               # v1 refusal_direction splits
+    base_url: https://raw.githubusercontent.com/andyrdt/refusal_direction/9d852fae1a9121c78b29142de733cb1340770cc3/dataset/splits
+    discovery_harmful: 300
+    discovery_harmless: 300
+    eval_harmful_pool: 600               # all of harmful_test (572) is generation-labelled by the clean model
+    n_eval_harmful: 200                  # up to 200 clean-refused harmful prompts
+    n_eval_harmless: 100
+  generic: {n_fit_v1: 100, n_cost_v1: 300, n_cost: 100}   # 100 of v1's 300 cost prompts
+  sentiment:
+    repo: stanfordnlp/sst2
+    revision: 8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb
+    files: {train: data/train-00000-of-00001.parquet, validation: data/validation-00000-of-00001.parquet}
+    n_discovery: 1000
+    n_eval: 500
+  answerability:
+    repo: rajpurkar/squad_v2
+    revision: 3ffb306f725f7d2ce8394bc1873b24868140c412
+    files: {train: squad_v2/train-00000-of-00001.parquet, validation: squad_v2/validation-00000-of-00001.parquet}
+    n_discovery: 1000
+    n_eval: 400
+    max_context_tokens: 150              # short passages are SELECTED (never truncated); max over all model tokenizers
+  toxicity:
+    repo: google/civil_comments
+    revision: f2970eb3a55777454c94069077cc8d9b5866312d
+    files: {discovery: data/validation-00000-of-00001.parquet, eval: data/test-00000-of-00001.parquet}
+    toxic_min: 0.5
+    nontoxic_max: 0.1
+    n_discovery: 1000
+    n_eval: 500
+    max_text_tokens: 150                 # short comments are selected, never truncated
+  max_prompt_tokens: 256                 # v1 filter for refusal/generic prompts
+  smoke_n: null                          # per split cap (smoke only)
+
+pairs:
+  development: [["Qwen/Qwen3-1.7B", truth], ["Qwen/Qwen3-1.7B", refusal]]
+  confirmatory: [["Qwen/Qwen3-1.7B", sentiment], ["Qwen/Qwen3-1.7B", answerability],
+                 ["Qwen/Qwen3.5-4B", truth], ["Qwen/Qwen3.5-4B", refusal],
+                 ["Qwen/Qwen3.5-4B", sentiment], ["Qwen/Qwen3.5-4B", answerability]]
+  substitute: toxicity                   # replaces a failing sentiment/answerability on that model
+  cross_task: [[truth, refusal], [sentiment, answerability]]   # the second slot follows the substitution
+
+gates:                                   # task inclusion gate (clean model, eval split)
+  single_token: {min_auroc: 0.85, min_coherence: 0.9}
+  refusal: {min_refused_harmful: 150, max_harmless_refusal: 0.10}
+  format_n: 8
+  format_tokens: 8
+
+sae_inclusion: {min_fve: 0.70, max_rel_ce_increase: 0.10, n_prompts: 96}
+
+sink_norm_multiple: 10                   # residual norm > 10x the median at layer L -> excluded (never intervened)
+pca: {n_tokens: 20000}
+bases: [sae, pca, dims]
+rules: [meandiff, l1probe, attrib, random]
+discovery_resample_frac: 0.8
+l1probe: {n_steps: 20, lambda_min_ratio: 0.001, max_iter: 1000, tol: 1.0e-4, sae_prefilter: 8192}
+random_rule: {sae_min_fire_rate: 0.01}
+reservoir: {prompt: 20000, generated: 5000}
+gen_role: {discovery_reply_tokens: 32}   # generated-role means come from clean greedy replies of this length
+
+tiers:
+  tier1: {budgets: [1, 5, 20, 50, 100, 200, 500], discovery_resamples: 2, random_draws: 2, random_dir: 5}
+  tier2: {budgets: [1, 5, 20, 100, 200, 500], discovery_resamples: 1, random_draws: 2, random_dir: 3}
+  controls: {discovery_resamples: 1}
+extension: {c_floor: 0.5, factor: 2, max_steps: null}   # keep doubling k until cost >= max(c*, 0.5) or the cap
+controls:
+  attrib_shuffled: true                  # all bases, Tier 1 ladder (+ extension)
+  cross_task_k: [50, 200]
+  c3: {n_quintiles: 5, groups_per_quintile: 4, group_size: 20}
+
+cost: {n_generic: 100, continuation_tokens: 8}   # KL over the first response position + 8 teacher-forced positions
+refusal_generation: {max_new_tokens: 32, agreement_check: {n_prompts: 100, long_tokens: 64}}
+
+# Blocks in priority order (frozen in prereg/hypotheses.yaml run_plan). Within a block: confirmatory pairs
+# first, then development pairs; models in the order above.
+blocks:
+  - {id: B1_primary, cells: primary}
+  - {id: B2_controls, cells: controls}
+  - {id: B3_tier2_25_75, cells: tier2, depths: [0.25, 0.75]}
+  - {id: B4_refusal_s2_resample, cells: refusal_extra}
+  - {id: B5_tier2_40_60, cells: tier2, depths: [0.4, 0.6]}
+
+budget:
+  total_hours: 12                        # dev + confirm GPU wall time (excluding prefetch and smoke)
+  confirm_hours: null                    # null: total_hours minus the latest finished dev run's wall time
+  dev_hours_assumed: 0.6                 # used when no finished dev run exists
+  overhead_s_per_intervention: 0.3
+  extension_factor: 0.15                 # expected extra points from curve extension (projection only)
+
+batching:                                # defaults; `--v2 --smoke` auto-tunes and writes runs/v2/tuning.json
+  max_batch_tokens: 32768
+  max_batch_size: 512
+  grad_batch_tokens: 4096
+  ce_batch_tokens: 2048                  # full-vocabulary logits (SAE loss check): ~2 GB fp32 per 2k tokens at V=248k
+  gen_batch_size: 128
+  memory_cap_gb: 100
+  tune_candidates_tokens: [8192, 16384, 32768, 65536, 131072]
+  tune_candidates_gen: [32, 64, 128, 256, 512]
+keep_models_loaded: true                 # both models fit easily in 128 GB; avoids reloading between blocks
+fast_path: true                          # reuse layers 0..L (equivalence-tested per model and depth)
+fast_path_tol: 1.0e-2
+identity_tol: 1.0e-2
+analysis: {bootstrap: 1000, background_workers: true}
+memory: {watchdog_min_available_gb: 16}
+
+phases:
+  dev:                                   # --v2 --dev: Qwen3-1.7B truth + refusal, 50% depth, both sites
+    models_only: ["Qwen/Qwen3-1.7B"]
+    tasks_only: [truth, refusal]
+    depths_only: [0.5]
+    tiers: {tier1: {discovery_resamples: 1}}
+    blocks:
+      - {id: D1_primary, cells: primary}
+      - {id: D2_refusal_s2_resample, cells: refusal_extra}
+  smoke:                                 # --v2 --smoke: every stage on tiny data, both models
+    depths_only: [0.5, 0.25]             # 50% plus one Tier 2 depth
+    data: {smoke_n: 16, refusal: {n_eval_harmful: 8, n_eval_harmless: 8}}   # 8 generation prompts x 16 tokens
+    tiers:
+      tier1: {budgets: [1, 10], discovery_resamples: 1, random_draws: 1, random_dir: 2}
+      tier2: {budgets: [1, 10], discovery_resamples: 1, random_draws: 1, random_dir: 1}
+    extension: {max_steps: 2}            # the grid stays small; a dedicated check runs one curve to its target
+    controls: {cross_task_k: [5], c3: {n_quintiles: 5, groups_per_quintile: 1, group_size: 4}}
+    reservoir: {prompt: 2000, generated: 500}
+    pca: {n_tokens: 4000}
+    sae_inclusion: {n_prompts: 24}
+    cost: {n_generic: 16}
+    refusal_generation: {max_new_tokens: 16, agreement_check: {n_prompts: 8, long_tokens: 24}}
+    gen_role: {discovery_reply_tokens: 16}
+    tasks: {refusal: {calib_n: 8}}
+    gates_enforced: false                # gates are computed and reported, never enforced on 16 examples
+    analysis: {bootstrap: 50, background_workers: false}
+    blocks:
+      - {id: B1_primary, cells: primary}
+      - {id: B2_controls, cells: controls}
+      - {id: B3_tier2_25_75, cells: tier2, depths: [0.25]}
+      - {id: B4_refusal_s2_resample, cells: refusal_extra}
+  dev_tiny:                              # developer plumbing test only (tiny random models; no weights download)
+    batching: {max_batch_tokens: 8192, grad_batch_tokens: 2048, gen_batch_size: 16, ce_batch_tokens: 1024,
+               tune_candidates_tokens: [2048, 4096], tune_candidates_gen: [8, 16]}
+    l1probe: {max_iter: 200}
