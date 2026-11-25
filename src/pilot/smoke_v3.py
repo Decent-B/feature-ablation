@@ -27,7 +27,8 @@ from . import bases as BZ
 from . import sites as ST
 from .utils import LOG, REPO_ROOT, fmt_secs, read_json, write_json
 
-PREFIX_TOL_BF16 = 1.0   # max |score diff| cached prefix vs full prompt: 2 bf16 steps at |logit| 64-128
+PREFIX_TOL_BF16 = 1.0          # max |score diff| cached prefix vs full prompt: 2 bf16 steps at |logit| 64-128
+PREFIX_MEDIAN_TOL_BF16 = 0.25  # median |score diff|: one bf16 step at |logit| 32-64
 
 
 @torch.inference_mode()
@@ -51,10 +52,11 @@ def model_checks(run, mc) -> dict:
         s0, _ = scores_all(mc, t, "eval", use_prefix=False)
         d = np.abs(s1 - s0)
         # bf16: the cached-prefix and full-prompt passes run different kernels, so a logit can land one or two bf16
-        # steps apart (0.125-0.5 at |logit| 16-128). Pass: typical example exact (median < tol), worst < 2 steps at 128.
+        # steps apart (0.125-0.5 at |logit| 16-128; IOI up to 3 steps). Pass: no systematic shift (median <= 0.25) and
+        # worst <= 1.0; a wrong prefix gives differences of whole nats and sign flips.
         med, mx = float(np.median(d)), float(d.max())
-        out[f"prefix_cache_{t}"] = {"max_abs_score_diff": mx, "median_abs_score_diff": med, "tol_median": tol,
-                                    "tol_max": PREFIX_TOL_BF16, "pass": med < tol and mx <= PREFIX_TOL_BF16}
+        out[f"prefix_cache_{t}"] = {"max_abs_score_diff": mx, "median_abs_score_diff": med, "tol_median": PREFIX_MEDIAN_TOL_BF16,
+                                    "tol_max": PREFIX_TOL_BF16, "pass": med <= PREFIX_MEDIAN_TOL_BF16 and mx <= PREFIX_TOL_BF16}
     # ---- identity and zero cost
     rn = TaskRunner(mc, task, depth)
     out["fast_path"] = rn.fast_path_check(float(cfg["fast_path_tol"]))

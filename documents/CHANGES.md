@@ -377,8 +377,10 @@ unchanged; v1 modes behave as before.
 - **Smoke check `prefix_cache_*` tolerance is bf16-aware** (`src/pilot/smoke_v3.py`, 2026-11-25). Cached-prefix vs
   full-prompt scores differed by 0.125-0.5 on GB10, exactly one or two bf16 steps at |logit| 16-128 (different
   attention kernels); median difference 0, 12-37% of prompts off by one step. The 1e-2 tolerance assumed exact
-  equality. Now: median |diff| < 1e-2 and max |diff| <= 1.0. Results are unaffected: clean and ablated scores both use
-  the cached prefix, so every comparison runs the same path.
+  equality. Now: median |diff| <= 0.25 and max |diff| <= 1.0 (a first try with median < 1e-2 still failed IOI: its
+  score is a two-name log-prob difference at |logit| ~8 on gemma, which has logit soft-capping, and every prompt
+  differed by 0-3 bf16 steps, median 0.09-0.125). A wrong prefix would give differences of whole nats. Results are
+  unaffected: clean and ablated scores both use the cached prefix, so every comparison runs the same path.
 
 ## Verification status
 
