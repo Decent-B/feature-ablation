@@ -1,0 +1,14 @@
+{
+  "files": {
+    "prereg/v3/hypotheses.yaml": "695748a6408306e676030db9e87c8e34f427f1b32205deda93292826598114db",
+    "prereg/v3/PREREGISTRATION.md": "45c92a2f6bc82c6a42abcf4a4f70adff1a7a7bc4b88d6386ad8a2b3bd9911d64",
+    "config/v3.yaml": "c4b0cc37d46cc0eb5509dd382965a6ab27f3e27fcf7fac51531c4d4e7f78d7ab",
+    "config/v3_sae_input_norm.yaml": "42752b8d86e76a7f7a181d48d5b1b42112e4dafe5eb99aee180c769919a9683b",
+    "src/pilot/analysis_v3.py": "b64581162723f2e931e1f94c530ebf823a16a2c858bb03bcbdad740913e1071a",
+    "src/pilot/analysis_v2.py": "8dd6cff53ea63ecbe26c55b6be53dcce272ee3284dda4859f2dc9cd6ef0d4dfa",
+    "src/pilot/stats.py": "3129ff6fd3020d1df06a29345d077971579cdbce5c71f41ef8b80adba76d7351"
+  },
+  "git_commit": "29b974a398bb80486e35118a8c146a4ea9f24a28",
+  "utc": "2026-11-25T10:38:15Z",
+  "tag": "prereg-v3-frozen"
+}
