@@ -1,0 +1,104 @@
+# Pilot v3 preregistration (machine-readable). DRAFT: the user reviews and edits this file, then runs
+# `bash run_pilot.sh --v3 --render-prereg`, commits, and `--v3 --freeze`. Thresholds here are read by
+# src/pilot/analysis_v3.py; the design settings live in config/v3.yaml (frozen together).
+title: "Feature-ablation pilot v3: does feature causality depend on basis, selection rule, task and model?"
+status: draft
+date_drafted: "2026-11-25"
+headline: >-
+  Feature causality (how much switching off selected units damages a behaviour, beyond switching off random units in
+  the same basis) depends on the basis, the selection rule, the task and the model. Depth and SAE width are tested
+  beside the headline.
+
+models: ["google/gemma-2-2b (base)", "Qwen/Qwen3-1.7B-Base (model test only)"]
+reference_setting: {model: google/gemma-2-2b, task: truth, depth: 0.5, strategy: mean, sae: "Gemma Scope 65k"}
+reference_task_order: [truth, ioi, sentiment, toxicity, answerability]
+bases: [sae, pca, dims]
+rules: [meandiff, l1probe, attrib, random]
+budgets: [1, 5, 20, 100, 200, 500]
+
+metric:
+  name: "Ē (damage beyond random, averaged over the budget ladder)"
+  definition: >-
+    E(k) = D_rule(k) - D_random(k) in the same cell and basis at the same number of units k; Ē is the mean of E over
+    the budgets present in both curves. Collateral cost is reported beside every Ē; budgets costing more than
+    `broken_cost` nats are flagged.
+  damage: "AUROC drop of logit(positive answer) - logit(negative answer) on the eval split"
+  cost: "mean KL(clean || ablated) over the next position + 8 teacher-forced positions of 100 generic prompts"
+  delta: 0.05
+  alpha: 0.05
+  bootstrap: 1000
+  reliable: >-
+    A difference is reliable if |point| >= delta, its 95% percentile bootstrap CI excludes 0, and its
+    Benjamini-Hochberg q-value within the test is <= alpha. A reversal is a method pair whose difference is reliably
+    positive at one level of the factor and reliably negative at another.
+  single_budgets: [20, 100, 500]
+  cost_matched: 0.02
+  broken_cost: 1.0
+
+inclusion_rules:
+  task_gate: "clean AUROC >= 0.85 and coherence >= 0.9 on the eval split; a failing task is excluded (no substitute)"
+  reference_task: "the reference task must pass on both models; otherwise the first task in reference_task_order that does"
+  sae: >-
+    FVE >= 0.70 and next-token loss increase <= 10% per (model, layer); main file first (Gemma 65k at L0 closest to
+    100; Qwen-Scope TopK 100), then the fallback (Gemma 16k at the L0 closest to the 65k file's; Qwen-Scope TopK 50);
+    otherwise the layer runs without the SAE basis. Input scaling (none or rms_d) as measured by the smoke test
+    (config/v3_sae_input_norm.yaml).
+  inconclusive: "no task passes on both models, or fewer than 3 tasks pass on Gemma"
+
+tests:
+  D1:
+    claim: "Changing the basis changes the effect"
+    compared: "the 3 bases in the reference cell, with the rule held fixed (3 rules x 3 pairs)"
+    holds_if: "under at least one rule, two bases differ reliably"
+  D2:
+    claim: "Changing the selection rule changes the effect"
+    compared: "the 3 rules in the reference cell, with the basis held fixed"
+    holds_if: "in at least one basis, two rules differ reliably"
+  D3:
+    claim: "The best method on one task is not the best on another"
+    compared: "the 9 methods on the 5 tasks (Gemma, 50% depth)"
+    holds_if: "a reliable reversal of a method pair between two tasks"
+  D4:
+    claim: "The best method on Gemma is not the best on Qwen"
+    compared: "the 9 methods on the two models (reference task, 50% depth); also reported for the SAE basis alone and for PCA + raw dims alone"
+    holds_if: "a reliable reversal of a method pair between the models"
+  D5:
+    claim: "The best method at one depth is not the best at another"
+    compared: "the 9 methods at 25, 40, 50, 60 and 75% depth (Gemma, reference task)"
+    holds_if: "a reliable reversal of a method pair between two depths"
+  D6:
+    claim: "Changing only the SAE's width changes the effect"
+    compared: "Gemma Scope 65k vs 16k at matched sparsity, each rule, reference cell"
+    holds_if: "under at least one rule, the two widths differ reliably"
+
+label:
+  SUPPORTED: "D1, D2, D3 and D4 all hold"
+  PARTIALLY SUPPORTED: "one to three of D1-D4 hold (the report names which)"
+  NOT SUPPORTED: "none of D1-D4 holds"
+  INCONCLUSIVE: "per the inclusion rules"
+  note: "D5 and D6 are reported directly under the label. Anchors and H0 never change the label."
+
+secondary:
+  S1: "readout strength vs damage over the readout groups (reference cell), Spearman rho pooled over bases (v2 bars reported)"
+  S2: "D1 and D2 under resample ablation; Kendall tau of the method ranking between mean and resample (reference cell)"
+  S3: "cross-task specificity over all task pairs at k = 50 and 200; attribution accuracy over the readout groups"
+  S4: "D1-D6 recomputed at single budgets k = 20, 100 and 500 instead of Ē"
+  S5: "D1-D6 recomputed with E at a fixed cost of 0.02 nats, where both curves reach it"
+  S6: "size per factor: the largest change each factor causes"
+  S7: "anchors (massmean, random_dir): damage and cost per cell"
+
+run_plan:
+  priority: [B1_reference, B2_depth, B3_task, B4_model, B5_sae_width, B6_resample, B7_controls]
+  dropped_blocks: []
+  time_guard: >-
+    4 GPU hours for dev + confirm (config/v3.yaml budget.total_hours); before each block the projected time is added
+    to the elapsed time and the run stops if it would exceed the budget (speed only). Any budget override after the
+    freeze needs --deviation and is listed at the top of the report.
+
+known_limitations:
+  - "Each test rests on one setting: it shows that a factor can change the result, not how widely that happens."
+  - "No interactions between factors (one factor at a time)."
+  - "Comparisons use equal unit counts; a method can look strong partly by doing more collateral damage (cost is reported; S5 checks a fixed cost)."
+  - "The two models come with different SAE releases (JumpReLU 65k vs TopK 32k), so the SAE-basis part of D4 mixes model and SAE release; D6 measures width alone on Gemma."
+  - "The bootstrap covers which eval examples were used, not which discovery examples picked the units (one selection per cell)."
+  - "Qwen3-1.7B-Base runs only the reference task at 50% depth."

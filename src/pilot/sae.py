@@ -3,11 +3,11 @@
 - adamkarvonen/qwen3-*-saes: <root>/resid_post_layer_<L>/trainer_<t>/{ae.pt, config.json}
 - Carlos4869/REINS-SAE:       <folder>/layer_<LL>.pt
 Both are run as JumpReLU with the stored scalar threshold (never batch top-k), so a
-token's activations do not depend on its batch. dictionary_learning folds its activation
-normalisation into the saved biases/threshold (`scale_biases(norm_factor)` before the
-final save), which is why REINS' own runtime applies the SAE to raw residuals; if a
-checkpoint carries an explicit `norm_factor`, it is applied here. Decoder directions are
-returned in raw activation scale.
+token's activations do not depend on its batch. If a checkpoint carries an explicit
+`norm_factor`, it is applied here; otherwise the caller sets one (v2: `sae_v2.set_input_norm`).
+The REINS files carry none and still expect global-RMS-scaled inputs (about x5 at mid depth on
+Qwen3.5-4B), so they must not be fed raw residuals. Decoder directions are returned in raw
+activation scale.
 """
 
 from __future__ import annotations

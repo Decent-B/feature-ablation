@@ -1,0 +1,194 @@
+# Pilot v3 configuration (documents/pilot-v3-plan.md). Frozen by `--v3 --freeze` together with
+# prereg/v3/hypotheses.yaml, config/v3_sae_input_norm.yaml (written by the smoke test) and the analysis code.
+# Hypothesis thresholds (delta, alpha, bootstrap) live in prereg/v3/hypotheses.yaml, not here.
+# Phase overrides (`phases:`) are deep-merged over the top level.
+
+version: 3
+seed: 0
+
+models:                                    # base models only; every model uses SAEs trained on that exact model
+  google/gemma-2-2b:                       # gated: read with HF_TOKEN from the environment (never stored)
+    attn_implementation: eager             # Gemma 2 soft-caps attention scores; some sdpa paths skip it silently
+    depths: [0.25, 0.4, 0.5, 0.6, 0.75]    # layers 7, 10, 13, 16, 20 (the depth test D5 uses all five)
+    sae: {format: gemmascope, repo: google/gemma-scope-2b-pt-res, width: 65k, extra_width: 16k, l0_target: 100,
+          trained_on: google/gemma-2-2b}
+    # Gemma Scope (JumpReLU): pre = x @ W_enc + b_enc, f = ReLU(pre) * (pre > threshold) (per latent); x^ = f @ W_dec
+    # + b_dec; no b_dec subtraction; hook blocks.N.hook_resid_post = output of model.model.layers[N]. The 16k file
+    # (L0 closest to the 65k file's L0) is the fallback and the second width for D6.
+  Qwen/Qwen3-1.7B-Base:
+    attn_implementation: sdpa
+    depths: [0.5]                          # layer 14; the model test D4 runs the reference task at 50% only
+    sae: {format: qwenscope, repo: Qwen/SAE-Res-Qwen3-1.7B-Base-W32K-L0_100,
+          fallback_repo: Qwen/SAE-Res-Qwen3-1.7B-Base-W32K-L0_50, trained_on: Qwen/Qwen3-1.7B-Base}
+    # Qwen-Scope (TopK): f = topk(ReLU(x @ W_enc.T + b_enc), k) with k from the repo's config.json; x^ = f @ W_dec.T +
+    # b_dec; no b_dec subtraction; hook = output of model.model.layers[N].
+# Layer rule: L = round(depth * num_hidden_layers) (half up), 0-indexed decoder-layer output (resid_post).
+keep_models_loaded: true                   # set false automatically on CPU (two fp32 models do not fit in 19 GB)
+
+reference: {model: google/gemma-2-2b, task: truth, depth: 0.5, strategy: mean, sae_width: main}
+reference_task_order: [truth, ioi, sentiment, toxicity, answerability]   # fallback if truth fails a gate (frozen)
+
+tasks:                                     # plain text; every prompt = fixed 4-example prefix + the query
+  truth:
+    template: "Statement: {statement}\nTrue or false?\nAnswer:"
+    answers: ["True", "False"]             # positive class first (quoted: YAML reads True / Yes as booleans)
+  sentiment:
+    template: "Review: {sentence}\nPositive or negative?\nAnswer:"
+    answers: ["Positive", "Negative"]
+  answerability:
+    template: "Passage: {context}\nQuestion: {question}\nCan the question be answered from the passage? Yes or no?\nAnswer:"
+    answers: ["Yes", "No"]                 # answerable = positive class
+  toxicity:
+    template: "Comment: {text}\nToxic? Yes or no?\nAnswer:"
+    answers: ["Yes", "No"]
+  ioi:
+    answers: per_example                   # score = logit(" A") - logit(" B"); positive class: the answer is A
+demos: {per_class: 2, short_quantile: 0.25, separator: "\n\n"}   # answerability: the shortest passages per class
+
+ioi:
+  n_discovery: 1000
+  n_eval: 500
+  n_dev: 200
+  name_split: {demo: 4, discovery: 0.45, dev: 0.15}      # rest -> eval; names never shared between sets
+  templates:
+    - "When {A} and {B} went to the {place}, {S} gave a {object} to"
+    - "After {A} and {B} arrived at the {place}, {S} handed a {object} to"
+    - "While {A} and {B} were at the {place}, {S} passed a {object} to"
+    - "When {A} and {B} got to the {place}, {S} offered a {object} to"
+    - "Then, {A} and {B} spent the day at the {place}. {S} gave a {object} to"
+    - "{A} and {B} met at the {place}. Later, {S} gave a {object} to"
+    - "After lunch, {A} and {B} walked to the {place}, and {S} gave a {object} to"
+    - "When {A} and {B} visited the {place}, {S} brought a {object} to"
+    - "Yesterday {A} and {B} went to the {place}. {S} handed a {object} to"
+    - "At the {place}, {A} and {B} talked for hours, and then {S} gave a {object} to"
+    - "Since {A} and {B} were working at the {place}, {S} passed a {object} to"
+    - "When {A} and {B} left the {place}, {S} sent a {object} to"
+    - "{A} and {B} were cleaning the {place} when {S} threw a {object} to"
+    - "On Monday, {A} and {B} went to the {place}, where {S} showed a {object} to"
+    - "Before {A} and {B} reached the {place}, {S} gave a {object} to"
+  places: [store, park, office, school, garden, station, restaurant, library, beach, museum, kitchen, market,
+           hospital, cafe, gym]
+  objects: [drink, book, ball, bag, letter, gift, key, ring, phone, flower, cake, ticket, pen, hat, cup]
+  names: [Mary, John, James, Lisa, Michael, Sarah, David, Emma, Daniel, Anna, Robert, Laura, Thomas, Rachel, Kevin,
+          Julia, Paul, Alice, Mark, Grace, Peter, Kate, Andrew, Emily, Brian, Helen, Jason, Linda, Eric, Susan, Adam,
+          Amy, Ryan, Jessica, Steven, Karen, Frank, Megan, Jack, Nancy, George, Diana, Henry, Claire, Simon, Lucy,
+          Victor, Jane, Oscar, Rose, Martin, Ellen, Edward, Sophie, Carl, Nina, Tony, Ruth, Sam, Joan]
+
+data:
+  truth:                                   # v1 cities + neg_cities, v1 city-grouped splits
+    base_url: https://raw.githubusercontent.com/saprmarks/geometry-of-truth/5d1c630c44f7e50bda7ad86d601ccadf9abc5ddb/datasets
+    files: [cities.csv, neg_cities.csv]
+    expected_rows: 1496
+    split: {discovery: 0.4, validation: 0.1, eval: 0.5}
+    n_eval: 500                            # fixed-seed balanced subset of the v1 eval split (same as v2)
+    n_dev: 200                             # dev slice: v1 eval split rows outside the 500
+  refusal:                                 # only the harmless Alpaca instructions are used (generic cost prompts)
+    base_url: https://raw.githubusercontent.com/andyrdt/refusal_direction/9d852fae1a9121c78b29142de733cb1340770cc3/dataset/splits
+  generic: {n_fit: 300, n_cost: 100, max_tokens: 128}   # plain-text instructions; fit = PCA pool, cost = KL prompts
+  sentiment:
+    repo: stanfordnlp/sst2
+    revision: 8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb
+    files: {train: data/train-00000-of-00001.parquet, validation: data/validation-00000-of-00001.parquet}
+    n_discovery: 1000
+    n_eval: 500
+  answerability:
+    repo: rajpurkar/squad_v2
+    revision: 3ffb306f725f7d2ce8394bc1873b24868140c412
+    files: {train: squad_v2/train-00000-of-00001.parquet, validation: squad_v2/validation-00000-of-00001.parquet}
+    n_discovery: 1000
+    n_eval: 400
+    max_context_tokens: 150                # short passages are SELECTED (never truncated); max over both tokenizers
+  toxicity:
+    repo: google/civil_comments
+    revision: f2970eb3a55777454c94069077cc8d9b5866312d
+    files: {discovery: data/validation-00000-of-00001.parquet, eval: data/test-00000-of-00001.parquet}
+    toxic_min: 0.5
+    nontoxic_max: 0.1
+    n_discovery: 1000
+    n_eval: 500
+    max_text_tokens: 150
+  smoke_n: null                            # per split cap (smoke only)
+
+gates:                                     # task inclusion gate (clean model, eval split)
+  single_token: {min_auroc: 0.85, min_coherence: 0.9}
+  min_tasks_gemma: 3
+
+sae_inclusion: {min_fve: 0.70, max_rel_ce_increase: 0.10, n_prompts: 96}
+input_norm_options: [none, rms_d]          # measured by the smoke test; choice stored in config/v3_sae_input_norm.yaml
+
+sink_norm_multiple: 10                     # residual norm > 10x the median at layer L -> excluded (never intervened)
+pca: {n_tokens: 20000}
+bases: [sae, pca, dims]
+rules: [meandiff, l1probe, attrib, random]
+l1probe: {n_steps: 20, lambda_min_ratio: 0.001, max_iter: 1000, tol: 1.0e-4, sae_prefilter: 8192}
+random_rule: {sae_min_fire_rate: 0.01}
+reservoir: {prompt: 20000}                 # resample sources (query tokens), reference cell only
+
+cell: {budgets: [1, 5, 20, 100, 200, 500], discovery_resamples: 1, random_draws: 1, random_dir: 3}
+discovery_resample_frac: 0.8
+controls:
+  cross_task_k: [50, 200]                  # every ordered task pair on Gemma at 50%
+  readout_groups: {n_bands: 5, groups_per_band: 4, group_size: 100}
+
+cost: {n_generic: 100, continuation_tokens: 8}   # KL over the next position + 8 teacher-forced positions
+
+# Blocks in priority order (frozen in prereg/v3/hypotheses.yaml run_plan).
+blocks:
+  - {id: B1_reference, cells: reference}
+  - {id: B2_depth, cells: depth}
+  - {id: B3_task, cells: task}
+  - {id: B4_model, cells: model}
+  - {id: B5_sae_width, cells: sae_width}
+  - {id: B6_resample, cells: resample}
+  - {id: B7_controls, cells: controls}
+
+budget:
+  total_hours: 4                           # dev + confirm GPU wall time (excluding prefetch and smoke)
+  dev_hours_assumed: 0.15
+  overhead_s_per_intervention: 0.3
+
+batching:                                  # defaults; `--v3 --smoke` auto-tunes and writes runs/v3/tuning.json
+  max_batch_tokens: 32768
+  max_batch_size: 512
+  grad_batch_tokens: 4096
+  ce_batch_tokens: 2048                    # full-vocabulary logits (SAE loss check): ~2 GB fp32 per 2k tokens at V=256k
+  gen_batch_size: 128
+  memory_cap_gb: 100
+  tune_candidates_tokens: [8192, 16384, 32768, 65536]
+fast_path: true                            # reuse layers 0..L (equivalence-tested per model and depth)
+prefix_cache: true                         # example prefix keys/values computed once (equivalence-tested)
+fast_path_tol: 1.0e-2
+identity_tol: 1.0e-2
+analysis: {bootstrap: 1000}
+memory:                                    # shared GB10: other jobs' GPU allocations reduce MemAvailable (speed only)
+  watchdog_min_available_gb: 16            # stop the current stage below this (then back off and retry)
+  safety_gb: 8                             # extra free memory wanted before a stage starts (scaled on smaller machines)
+  max_wait_minutes: 30                     # wait this long for other jobs to free memory before a stage
+  poll_seconds: 30
+  max_backoffs: 3                          # halve every batch budget and retry a stage at most this many times
+  min_batch_factor: 0.0625
+
+phases:
+  dev:                                     # --v3 --dev: Gemma, truth + IOI at 50% on the dev slices
+    models_only: ["google/gemma-2-2b"]
+    tasks_only: [truth, ioi]
+    depths_only: [0.5]
+    eval_split: dev
+    blocks:
+      - {id: D1_dev, cells: dev}
+  smoke:                                   # --v3 --smoke: every stage on tiny data, both models
+    smoke_depths: [0.5, 0.25]              # the depth block runs one extra depth; SAE fidelity covers every layer
+    data: {smoke_n: 16, generic: {n_fit: 32, n_cost: 16}}
+    ioi: {n_discovery: 16, n_eval: 16, n_dev: 16}
+    cell: {budgets: [1, 10], discovery_resamples: 1, random_draws: 1, random_dir: 1}
+    controls: {cross_task_k: [5], readout_groups: {n_bands: 5, groups_per_band: 1, group_size: 4}}
+    reservoir: {prompt: 2000}
+    pca: {n_tokens: 4000}
+    sae_inclusion: {n_prompts: 24}
+    cost: {n_generic: 16}
+    gates_enforced: false                  # gates are computed and reported, never enforced on 16 examples
+    analysis: {bootstrap: 50}
+  dev_tiny:                                # developer plumbing test only (tiny random models; no weights download)
+    batching: {max_batch_tokens: 8192, grad_batch_tokens: 2048, gen_batch_size: 16, ce_batch_tokens: 1024,
+               tune_candidates_tokens: [2048, 4096]}
+    l1probe: {max_iter: 200}

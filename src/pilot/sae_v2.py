@@ -3,8 +3,9 @@
 dictionary_learning  <root>/resid_post_layer_<N>/trainer_<t>/{ae.pt, config.json}; the trainer is picked by
                      width and L0 from its config.json (never hardcoded).
 reins                <folder>/layer_<NN>.pt
-The file *named* N holds the SAE for 0-indexed decoder-layer output N (`layer_offset: 0`), with no input
-scaling (`input_norm: none`), as both releases' model cards and code state (sources in config/v2.yaml).
+The file *named* N holds the SAE for 0-indexed decoder-layer output N (`layer_offset: 0`). Input scaling:
+dictionary_learning takes raw activations (`input_norm: none`); REINS needs global-RMS rescaling (`input_norm:
+rms_d`), which is not folded into its files (evidence in config/v2.yaml).
 The gate's fidelity check (FVE and next-token loss) still decides whether each SAE is included at each layer.
 The checkpoint loader is v1's `sae.SAE`.
 """

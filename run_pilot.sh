@@ -17,16 +17,21 @@
 #   bash run_pilot.sh --v2 --freeze          hash, commit and tag the preregistration
 #   bash run_pilot.sh --v2 --confirm [--deviation "<reason>"]   confirmatory run (needs a valid freeze)
 #   add --resume (or --out DIR) to continue a v2 run
+#
+# v3 (documents/pilot-v3-plan.md); runs land in runs/v3/<phase>/<run_id>/; needs HF_TOKEN in the environment (Gemma):
+#   bash run_pilot.sh --v3 --prefetch | --smoke | --dev | --render-prereg | --freeze | --confirm [--deviation "<reason>"]
+#   (one-command pipeline: bash run_v3.sh)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 CHECK=0; SMOKE=0; RESUME=0; FORCE=0; DEV=0; OUT=""
-V2=0; V2MODE=""; DEVIATION=""
+V2=0; V3=0; V2MODE=""; DEVIATION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --v2) V2=1 ;;
+    --v3) V3=1 ;;
     --prefetch|--dev|--freeze|--confirm|--render-prereg) V2MODE="${1#--}" ;;
     --deviation) DEVIATION="${2:?--deviation needs a reason}"; shift ;;
     --deviation=*) DEVIATION="${1#--deviation=}" ;;
@@ -45,17 +50,18 @@ done
 
 log() { echo "[run_pilot $(date +%H:%M:%S)] $*"; }
 
-if [[ $V2 -eq 1 ]]; then
+[[ $V2 -eq 1 && $V3 -eq 1 ]] && { echo "use either --v2 or --v3"; exit 2; }
+if [[ $V2 -eq 1 || $V3 -eq 1 ]]; then
   [[ $SMOKE -eq 1 ]] && V2MODE="smoke"
-  [[ -n "$V2MODE" ]] || { echo "--v2 needs one of --prefetch --smoke --dev --render-prereg --freeze --confirm"; exit 2; }
+  [[ -n "$V2MODE" ]] || { echo "--v2 / --v3 need one of --prefetch --smoke --dev --render-prereg --freeze --confirm"; exit 2; }
   [[ $CHECK -eq 0 ]] || { echo "--check is a v1 mode; do not combine it with --v2"; exit 2; }
   [[ -z "$DEVIATION" || "$V2MODE" == "confirm" ]] || { echo "--deviation applies to --v2 --confirm only"; exit 2; }
 elif [[ -n "$V2MODE" || -n "$DEVIATION" ]]; then
-  echo "--$V2MODE / --deviation are v2 modes: add --v2"; exit 2
+  echo "--$V2MODE / --deviation are v2 / v3 modes: add --v2 or --v3"; exit 2
 fi
 CPU_OK=0
 [[ $SMOKE -eq 1 || $DEV -eq 1 ]] && CPU_OK=1
-[[ $V2 -eq 1 && "$V2MODE" =~ ^(prefetch|freeze|render-prereg)$ ]] && CPU_OK=1
+[[ ( $V2 -eq 1 || $V3 -eq 1 ) && "$V2MODE" =~ ^(prefetch|freeze|render-prereg)$ ]] && CPU_OK=1
 
 # ------------------------------------------------------------------ environment for Python
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas      # Triton (incl. Gated DeltaNet kernels) on sm_121
@@ -109,7 +115,7 @@ if [[ ! -f "$CHECK_STAMP" || ( $NEED_FULL -eq 1 && ! -f "$FULL_STAMP" ) ]]; then
   uv pip install --python "$PY" --quiet "huggingface_hub==2.4.0"
   # start the model download now, overlapped with the PyTorch install
   KIND=pilot; [[ $CHECK -eq 1 ]] && KIND=check; [[ $SMOKE -eq 1 ]] && KIND=smoke
-  if [[ $DEV -eq 0 && $V2 -eq 0 ]]; then
+  if [[ $DEV -eq 0 && $V2 -eq 0 && $V3 -eq 0 ]]; then
     mkdir -p runs
     "$PY" -m pilot.prefetch "$KIND" > runs/.prefetch.log 2>&1 &
     PREFETCH_PID=$!
@@ -162,6 +168,37 @@ fi
 
 run_py() { "${PREFIX[@]}" "$PY" -m pilot.cli "$@"; }
 run_v2() { "${PREFIX[@]}" "$PY" -m pilot.cli_v2 "$@"; }
+run_v3() { "${PREFIX[@]}" "$PY" -m pilot.cli_v3 "$@"; }
+
+# ------------------------------------------------------------------ v3 dispatch
+if [[ $V3 -eq 1 ]]; then
+  VARGS=("--$V2MODE")
+  [[ $RESUME -eq 1 ]] && VARGS+=(--resume)
+  [[ -n "$OUT" ]] && VARGS+=(--out "$OUT")
+  [[ $DEV -eq 1 ]] && VARGS+=(--dev-tiny)
+  [[ -n "$DEVIATION" ]] && VARGS+=(--deviation "$DEVIATION")
+  if [[ $DEV -eq 0 && "$V2MODE" =~ ^(prefetch|smoke|dev|confirm)$ && -z "${HF_TOKEN:-}" ]]; then
+    log "ERROR: HF_TOKEN is not set. google/gemma-2-2b is gated: accept its license on huggingface.co, then"
+    log "       export HF_TOKEN=hf_... (the token is read from the environment only and never stored)."
+    exit 3
+  fi
+  if [[ "$V2MODE" != "smoke" ]]; then
+    run_v3 "${VARGS[@]}"
+    exit $?
+  fi
+  T0=$(date +%s)
+  set +e
+  run_v3 "${VARGS[@]}"
+  RC=$?
+  set -e
+  RUN_DIR="$(cat runs/v3/smoke/.last 2>/dev/null || true)"
+  log "v3 smoke run finished with exit code $RC in $(( $(date +%s) - T0 )) s: $RUN_DIR"
+  [[ $RC -eq 0 && -n "$RUN_DIR" ]] || exit $RC
+  log "v3 acceptance checks (pytest, SAE fidelity + scaling + layer index, prefix cache, identity, zero cost, freeze enforcement, prefetch, projection)"
+  CARGS=(--verify-smoke --out "$RUN_DIR"); [[ $DEV -eq 1 ]] && CARGS+=(--dev-tiny)
+  run_v3 "${CARGS[@]}"
+  exit $?
+fi
 
 # ------------------------------------------------------------------ v2 dispatch
 if [[ $V2 -eq 1 ]]; then
