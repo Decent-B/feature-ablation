@@ -368,6 +368,17 @@ unchanged; v1 modes behave as before.
 - **Cross-task control also ablates the task's own top-k attribution units** at the same k (rule `own_task`), the
   comparison S3 needs.
 - **The CPU smoke path** loads one model at a time (two fp32 models do not fit in 19 GB); on the GB10 both stay loaded.
+- **Smoke check `identity_cached_activations`: real tokens only when filling the value table** (`src/pilot/smoke_v3.py`,
+  2026-11-25). The first GB10 smoke failed it (max |dlogit| 8.6 gemma, 2.3 Qwen). Cause: the check wrote every column
+  of the left-padded batch, and pad columns clamp to position 0, so several writes hit the slot of the first real
+  token; on CUDA the winner of duplicate-index writes is undefined, so that slot sometimes held a pad activation (a
+  rerun gave 14.9). Writing real tokens only gives 0.0 on both models. Check-only bug: the ablation engine never
+  builds this table. (v2's check is unaffected: it never edits position 0.)
+- **Smoke check `prefix_cache_*` tolerance is bf16-aware** (`src/pilot/smoke_v3.py`, 2026-11-25). Cached-prefix vs
+  full-prompt scores differed by 0.125-0.5 on GB10, exactly one or two bf16 steps at |logit| 16-128 (different
+  attention kernels); median difference 0, 12-37% of prompts off by one step. The 1e-2 tolerance assumed exact
+  equality. Now: median |diff| < 1e-2 and max |diff| <= 1.0. Results are unaffected: clean and ablated scores both use
+  the cached prefix, so every comparison runs the same path.
 
 ## Verification status
 
