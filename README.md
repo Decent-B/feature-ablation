@@ -298,6 +298,14 @@ SAE input scaling), `src/pilot/analysis_v3.py` and the v2 / stats code it calls.
 freeze (`PILOT_V3_CONFIRM_HOURS`) is refused unless given with `--deviation`, and every deviation is listed at the
 top of the report.
 
+### Sharing the GB10 with other jobs
+
+Other users' GPU jobs take memory from the same 128 GB pool. Before each stage the run waits (up to 30 min) until
+enough memory is free, and shrinks its batches to fit what is free. If the memory watchdog stops a stage or the GPU
+runs out of memory, it halves every batch and retries the stage (up to 3 times; finished work is kept). This changes
+only speed, never results; every wait and batch change is listed under "Competing memory use" in the report. Only if
+memory never frees up does the run stop with a clear message; rerunning continues where it stopped.
+
 ### Expected runtime on the GB10
 
 About 2.5 h after the downloads: smoke ~20 min, dev ~10 min, confirm ~2 h (time guard: 4 h for dev + confirm).

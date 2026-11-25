@@ -160,6 +160,20 @@ def _runtime_md(run) -> list[str]:
     return L
 
 
+def _resources_md(run) -> list[str]:
+    p = run.run_dir / "resources.json"
+    ev = read_json(p).get("events", []) if p.exists() else []
+    if not ev:
+        return ["No waiting or batch changes: memory was free throughout."]
+    L = ["Other jobs' memory use changed the batch sizes (speed only; results are unaffected):", "",
+         "| Time | Stage | Event | Free memory (GB) | Batch factor | Detail |", "|---|---|---|---|---|---|"]
+    for e in ev:
+        det = e.get("reason") or e.get("note") or (f"waited {e['waited_s']} s" if "waited_s" in e else "") or \
+            (f"headroom {e.get('headroom_gb')} GB" if "headroom_gb" in e else "")
+        L.append(f"| {e['time']} | {e['stage']} | {e['kind']} | {e['mem_available_gb']} | x{e['factor']:g} | {det} |")
+    return L
+
+
 def _deviations_md(run) -> list[str]:
     devs = run.manifest().get("deviations") or []
     L = []
@@ -190,6 +204,7 @@ def report(run, res: dict, inc: dict) -> str:
     L += ["## Ē per method (damage beyond random, averaged over the budget ladder)", ""] + _methods_md(res) + [""]
     L += ["## Anchors (S7)", ""] + _anchors_md(res.get("secondary", {})) + [""]
     L += ["## Runtime", ""] + _runtime_md(run) + [""]
+    L += ["## Competing memory use", ""] + _resources_md(run) + [""]
     return "\n".join(L) + "\n"
 
 
@@ -208,6 +223,7 @@ def dev_report(run, res: dict, inc: dict, meth: list[dict]) -> str:
               + ("narrow enough to resolve δ-sized differences." if np.median(widths) / 2 < 0.05 else
                  "wider than δ; consider larger test sets before freezing.")]
     L += ["", "## Runtime", ""] + _runtime_md(run) + [""]
+    L += ["## Competing memory use", ""] + _resources_md(run) + [""]
     chk = run.run_dir / "ablate" / "checks.json"
     if chk.exists():
         L += ["## Fast-path checks", "", "```", json.dumps(read_json(chk), indent=1)[:3000], "```", ""]

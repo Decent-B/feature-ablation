@@ -309,6 +309,8 @@ unchanged; v1 modes behave as before.
 | `src/pilot/prereg_v3.py` | Render / freeze / verify / enforce for the v3 preregistration (tag `prereg-v3-frozen`) |
 | `src/pilot/devtiny_v3.py` | Tiny Gemma 2 and Qwen3 models with SAEs in both release layouts (CPU plumbing test) |
 | `src/pilot/cli_v3.py` | v3 orchestration (`--prefetch/--smoke/--verify-smoke/--dev/--render-prereg/--freeze/--confirm`) |
+| `src/pilot/resources_v3.py` | Competing memory use on the shared GB10: wait for free memory before a stage, fit batch budgets to it, halve batches and retry on a watchdog stop or out-of-memory error (speed only; logged to resources.json and the report) |
+| `tests/test_v3_resources.py` | Waiting, fitting, back-off and retry, watchdog re-arm, real Ctrl-C not retried, persistence, giving up |
 | `tests/test_v3.py` | SAE formulas vs the reference code, L0 choice, IOI data, prefix cache = full prompt (Gemma 2 + Qwen3, fast path, gradients), cell plan, D-tests, label, prereg |
 
 ## Files modified
@@ -331,7 +333,7 @@ unchanged; v1 modes behave as before.
 
 ## Verification status
 
-- `pytest -q tests`: 65 passed (v1, v2 and v3).
+- `pytest -q tests`: 74 passed (v1, v2 and v3, including the competing-memory tests).
 - SAE formulas checked against the real files: Gemma Scope `layer_13/width_16k/average_l0_83` and Qwen-Scope
   `layer14.sae.pt` match direct transcriptions of SAELens' `JumpReLUSAE` and Qwen's `app.py` exactly.
 - Qwen-Scope on real Qwen3-1.7B-Base activations (CPU, 454 tokens): FVE 0.763 at layer 14 with raw inputs (0.685 at

@@ -73,7 +73,9 @@ def _stage(run, name: str, marker: Path, fn, resume: bool):
         run.wd.reset_peak()
     torch_reset_peak()
     t0 = time.time()
-    info = fn()
+    from .resources_v3 import run_with_backoff
+
+    info = run_with_backoff(run, name, fn)            # waits for / fits to free memory; backs off on a memory stop
     dt = time.time() - t0
     mem = stage_memory_record(run.wd)
     man = run.manifest()
@@ -98,6 +100,7 @@ def _budget_override(cfg: dict) -> list[str]:
 def run_phase(phase: str, args) -> int:
     from .engine_v3 import RunCtx
     from .memory import MemoryWatchdog, effective_threshold_gb
+    from .resources_v3 import ResourceError
 
     cfg = load_v3_config(phase, dev_tiny=args.dev_tiny)
     root = Path.cwd()
@@ -174,6 +177,10 @@ def run_phase(phase: str, args) -> int:
             return EXIT_ABORT_MEMORY
         LOG.error("interrupted; finished stages are kept: rerun with --resume")
         return 130
+    except ResourceError as e:
+        LOG.error("NOT ENOUGH FREE MEMORY: %s", e)
+        (run_dir / "RESOURCE_STOP.txt").write_text(str(e) + "\n")
+        return EXIT_ABORT_MEMORY
     except HarnessError as e:
         LOG.error("HARNESS ERROR: %s", e)
         (run_dir / "HARNESS_ERROR.txt").write_text(str(e) + "\n")

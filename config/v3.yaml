@@ -160,7 +160,13 @@ prefix_cache: true                         # example prefix keys/values computed
 fast_path_tol: 1.0e-2
 identity_tol: 1.0e-2
 analysis: {bootstrap: 1000}
-memory: {watchdog_min_available_gb: 16}
+memory:                                    # shared GB10: other jobs' GPU allocations reduce MemAvailable (speed only)
+  watchdog_min_available_gb: 16            # stop the current stage below this (then back off and retry)
+  safety_gb: 8                             # extra free memory wanted before a stage starts (scaled on smaller machines)
+  max_wait_minutes: 30                     # wait this long for other jobs to free memory before a stage
+  poll_seconds: 30
+  max_backoffs: 3                          # halve every batch budget and retry a stage at most this many times
+  min_batch_factor: 0.0625
 
 phases:
   dev:                                     # --v3 --dev: Gemma, truth + IOI at 50% on the dev slices

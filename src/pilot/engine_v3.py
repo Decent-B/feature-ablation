@@ -45,6 +45,13 @@ class RunCtx:
             cfg["batching"].update(max_batch_tokens=4096, grad_batch_tokens=1024, ce_batch_tokens=512,
                                    tune_candidates_tokens=[1024, 2048, 4096])   # fp32 Gemma (10.5 GB) + 256k-vocab logits
         self._m = {}
+        from .resources_v3 import Resources
+
+        self.res = Resources(self)                       # competing memory use: wait, fit, back off (speed only)
+
+    @property
+    def batch_factor(self) -> float:
+        return self.res.factor
 
     @property
     def manifest_path(self) -> Path:
@@ -106,6 +113,9 @@ class MCtx:
                 for k in ("max_batch_tokens", "grad_batch_tokens"):
                     if t.get(k):
                         b[k] = int(t[k])
+                for k in ("weights_gb", "batch_mem_gb"):         # used to fit batches to free memory
+                    if t.get(k) is not None:
+                        b[k] = float(t[k])
                 b["source"] = f"{TUNING3_PATH} ({t.get('tuned_at')})"
         b.setdefault("source", "config/v3.yaml defaults")
         return b
@@ -211,13 +221,16 @@ class MCtx:
         return out
 
     def batches(self, token_lists, kind: str = "fwd"):
+        """Length-sorted, left-padded batches. Every token budget is scaled by the run's batch factor (1 unless other
+        jobs' memory use forced a smaller batch; see resources_v3). Batch size never changes what is computed."""
         t = self.tuning
+        f = float(getattr(self.run, "batch_factor", 1.0))
         n = {"grad": "grad_batch_tokens", "ce": "ce_batch_tokens"}.get(kind, "max_batch_tokens")
         if kind == "gen":
-            bs = int(t["gen_batch_size"])
+            bs = max(1, int(int(t["gen_batch_size"]) * f))
             return M.make_batches(token_lists, self.tok.pad_token_id, self.run.device, bs, bs * 1024)
         return M.make_batches(token_lists, self.tok.pad_token_id, self.run.device, int(t["max_batch_size"]),
-                              int(t.get(n, 2048)))
+                              max(128, int(int(t.get(n, 2048)) * f)))
 
     # ---------------------------------------------------------------- example prefix
     def prefix(self, task: str) -> "PrefixKV":

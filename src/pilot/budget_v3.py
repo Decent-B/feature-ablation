@@ -56,6 +56,8 @@ def tune_model(mc, task: str) -> dict:
         reps = [qs[i % len(qs)] for i in range(n)]
         return M.make_batches(reps, mc.tok.pad_token_id, mc.run.device, 10**6, 10**9)[0]
 
+    _reset()
+    out["weights_gb"] = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else None
     best = None
     for tok_n in bc["tune_candidates_tokens"]:
         b = batch(int(tok_n))
@@ -106,6 +108,9 @@ def tune_model(mc, task: str) -> dict:
         bestg = rec
     out["grad_batch_tokens"] = int(max(bestg["tokens"], 256)) if bestg else int(bc["grad_batch_tokens"])
     out["grad_tokens_per_s"] = bestg["tokens_per_s"] if bestg else None
+    if out["weights_gb"] is not None:                 # GPU: activation memory of the chosen batches, beyond the weights
+        peaks = [r["peak_gb"] for r in (best, bestg) if r]
+        out["batch_mem_gb"] = max(0.0, max(peaks) - out["weights_gb"]) if peaks else None
     LOG.info("%s tuned: forward %d query tokens/batch (%.0f tok/s), backward %d tokens/batch", mc.slug,
              out["max_batch_tokens"], out["fwd_tokens_per_s"] or 0, out["grad_batch_tokens"])
     return out
