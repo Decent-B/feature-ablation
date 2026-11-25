@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 runs/
 outputs/
+# v3 dev-tiny plumbing test output
+config/v3_sae_input_norm.devtiny.yaml

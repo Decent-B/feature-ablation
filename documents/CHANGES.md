@@ -283,3 +283,57 @@ unchanged; v1 modes behave as before.
 - **Not yet verified on real models:** gates and baselines of the new tasks, SAE fidelity on the real
   SAEs (including the REINS base-to-instruct transfer), throughput, every GPU-only path. Run
   `bash run_pilot.sh --v2 --smoke` on the GB10 first.
+
+# v3 (documents/pilot-v3-plan.md)
+
+## Files created
+
+| File | Purpose |
+|---|---|
+| `config/v3.yaml` | v3 settings: two base models, SAE releases, reference setting, tasks (plain-text query templates), IOI, cell design, blocks, budget, phase overrides |
+| `config/v3_sae_input_norm.yaml` | Written by `--v3 --smoke`: measured SAE input scaling per (model, layer, file); frozen with the plan |
+| `prereg/v3/hypotheses.yaml`, `prereg/v3/PREREGISTRATION.md` | Draft preregistration: D1–D6, label, secondary analyses, run plan, limitations (rendering generated) |
+| `run_v3.sh` | One-command pipeline (prefetch → smoke → dev → freeze → confirm), stops at the first error, resumes; checks HF_TOKEN |
+| `src/pilot/v3common.py` | Config loading, paths, reference setting, reference-task fallback, one-factor-at-a-time cell plan |
+| `src/pilot/sae_v3.py` | Gemma Scope (JumpReLU, per-latent threshold) and Qwen-Scope (TopK after ReLU) loaders, file choice by L0, input scaling, FVE |
+| `src/pilot/data_v3.py` | Text splits for five tasks, IOI generator (disjoint single-token names), 4-example prefixes, dev slices, generic prompts, tokenization |
+| `src/pilot/engine_v3.py` | Run/model contexts, cached example prefix (PrefixKV), query batches, score functions (per-example for IOI), TaskRunner |
+| `src/pilot/gate_v3.py` | Tokenization, answer tokens, task gates, sink thresholds, SAE fidelity for both files and both input scalings, layer-index check, inclusion |
+| `src/pilot/prep_v3.py` | Generic continuations, PCA, selection statistics with the cached prefix, readout groups, reservoir |
+| `src/pilot/ablate_v3.py` | Blocks, one-factor cells, fixed ladder (no doubling), anchors, 16k-SAE curves, resample, controls, time guard |
+| `src/pilot/analysis_v3.py` | Ē, reliable differences / reversals with BH, D1–D6, label, S1–S7 |
+| `src/pilot/report_v3.py` | `report_v3.md` and the blinded `dev_report.md` |
+| `src/pilot/budget_v3.py` | Batch tuning with the cached prefix, throughput, projection against the budget |
+| `src/pilot/smoke_v3.py` | In-run checks (prefix cache, identity, zero cost, fast path, resample) and the post-run acceptance verifier |
+| `src/pilot/prefetch_v3.py` | Downloads with the HF_TOKEN check (fail fast on 401/403) and the completeness report |
+| `src/pilot/prereg_v3.py` | Render / freeze / verify / enforce for the v3 preregistration (tag `prereg-v3-frozen`) |
+| `src/pilot/devtiny_v3.py` | Tiny Gemma 2 and Qwen3 models with SAEs in both release layouts (CPU plumbing test) |
+| `src/pilot/cli_v3.py` | v3 orchestration (`--prefetch/--smoke/--verify-smoke/--dev/--render-prereg/--freeze/--confirm`) |
+| `tests/test_v3.py` | SAE formulas vs the reference code, L0 choice, IOI data, prefix cache = full prompt (Gemma 2 + Qwen3, fast path, gradients), cell plan, D-tests, label, prereg |
+
+## Files modified
+
+| File | Change |
+|---|---|
+| `src/pilot/models.py` | `load_model(..., attn=...)`: per-model attention implementation (`eager` for Gemma 2); default unchanged |
+| `run_pilot.sh` | `--v3` modes and dispatch (HF_TOKEN check, smoke + acceptance checks) |
+| `README.md` | v3 section |
+
+## Deviations from the plan, and why
+
+- **SAE input scaling is stored in `config/v3_sae_input_norm.yaml`**, not inside `config/v3.yaml`: the smoke test writes
+  it, and rewriting the hand-commented config programmatically would be fragile. Both files are frozen.
+- **Qwen-Scope encoder: ReLU before top-k.** The model card's README snippet omits the ReLU; the repo's own `app.py`
+  (`topk_relu`) applies it. The selected positive values are identical either way.
+- **Cross-task control also ablates the task's own top-k attribution units** at the same k (rule `own_task`), the
+  comparison S3 needs.
+- **The CPU smoke path** loads one model at a time (two fp32 models do not fit in 19 GB); on the GB10 both stay loaded.
+
+## Verification status
+
+- `pytest -q tests`: 65 passed (v1, v2 and v3).
+- SAE formulas checked against the real files: Gemma Scope `layer_13/width_16k/average_l0_83` and Qwen-Scope
+  `layer14.sae.pt` match direct transcriptions of SAELens' `JumpReLUSAE` and Qwen's `app.py` exactly.
+- Qwen-Scope on real Qwen3-1.7B-Base activations (CPU, 454 tokens): FVE 0.763 at layer 14 with raw inputs (0.685 at
+  layer 13, 0.665 at layer 15; 0.457 with rms_d scaling), L0 100, next-token loss -0.7%.
+- Gemma Scope on real Gemma activations: not run here (gated; needs HF_TOKEN) — the smoke test measures it.

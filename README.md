@@ -245,3 +245,76 @@ rankings, means, reservoirs), `ablate/chunks/` (per-example results), `ablate/re
   model then uses the slower PyTorch path and the projection accounts for it.
 - **Developer plumbing test** (no downloads of weights): `bash run_pilot.sh --v2 --smoke --dev-tiny` runs the
   whole v2 pipeline on tiny random versions of both architectures. Its numbers are meaningless.
+
+## v3 (documents/pilot-v3-plan.md)
+
+v3 tests whether feature causality depends on the basis, the selection rule, the task and the model. It uses two
+base models (Gemma 2 2B with Google's Gemma Scope SAEs, Qwen3-1.7B-Base with Qwen's Qwen-Scope SAEs), five tasks
+that need no chat model (truth, sentiment, answerability, toxicity, IOI), and varies one factor at a time around a
+reference setting (Gemma, truth, 50% depth, mean ablation, 65k SAE). v1 and v2 modes and outputs are unchanged.
+
+### Access to Gemma: HF_TOKEN
+
+`google/gemma-2-2b` is gated. Once: accept the Gemma license on its Hugging Face page with your account and create a
+read token. Then, in the shell you start the run from:
+
+```bash
+export HF_TOKEN=hf_...      # read from the environment only; never written to a file, log or report
+```
+
+Every v3 step that downloads or loads Gemma checks the token first and stops with a clear message if it is missing
+or the license has not been accepted (HTTP 401/403).
+
+### One command
+
+```bash
+bash run_v3.sh            # prefetch -> smoke -> dev -> freeze -> confirm, in the background
+bash run_v3.sh --status   # where it is
+bash run_v3.sh --stop     # stop (finished work is kept); run again to continue
+```
+
+It stops at the first error and says why; running it again resumes where it stopped.
+
+### Order of commands (what run_v3.sh does)
+
+```bash
+bash run_pilot.sh --v3 --prefetch        # ~23 GB: both models, SAE files for every layer used, datasets
+bash run_pilot.sh --v3 --smoke           # every stage on tiny data + acceptance checks; measures the SAE input
+                                         # scaling and writes config/v3_sae_input_norm.yaml
+bash run_pilot.sh --v3 --dev             # Gemma, truth + IOI at 50% on held-out dev slices (harness health only)
+# review prereg/v3/hypotheses.yaml (status: final), then:
+bash run_pilot.sh --v3 --render-prereg && git commit -am "v3: final preregistration"
+bash run_pilot.sh --v3 --freeze          # hashes + commits + tags prereg-v3-frozen
+bash run_pilot.sh --v3 --confirm         # refuses without a valid freeze; changes need --deviation "<reason>"
+```
+
+`--dev-tiny` swaps in tiny random models (no token, no GPU) for a plumbing test:
+`PYTHONPATH=src .venv/bin/python -m pilot.cli_v3 --smoke --dev-tiny`.
+
+### What the freeze covers
+
+`prereg/v3/hypotheses.yaml` and its rendering, `config/v3.yaml`, `config/v3_sae_input_norm.yaml` (the measured
+SAE input scaling), `src/pilot/analysis_v3.py` and the v2 / stats code it calls. A time-budget override after the
+freeze (`PILOT_V3_CONFIRM_HOURS`) is refused unless given with `--deviation`, and every deviation is listed at the
+top of the report.
+
+### Expected runtime on the GB10
+
+About 2.5 h after the downloads: smoke ~20 min, dev ~10 min, confirm ~2 h (time guard: 4 h for dev + confirm).
+The smoke test re-measures the throughput and writes the projection to `smoke_report.md`.
+
+### Reading `report_v3.md`
+
+1. **Headline**: `SUPPORTED` (D1–D4 all hold), `PARTIALLY SUPPORTED`, `NOT SUPPORTED`, or `INCONCLUSIVE`.
+2. The D1–D6 table: whether each test holds, how many comparisons were reliable (|difference| ≥ 0.05, 95% CI
+   excludes 0, BH q ≤ 0.05), and the largest change; D4 is also shown for the SAE basis alone and for PCA + dims.
+3. Reversals behind D3–D5 (which method beats which, where).
+4. Deviations and skipped blocks; inclusion (task gates, SAE fidelity per layer and file, input scaling, layer index).
+5. Secondary analyses S1–S7, Ē per method with CIs and costs, anchors, runtime.
+
+`dev_report.md` shows harness health only and withholds every result.
+
+### v3 outputs
+
+`runs/v3/<phase>/<run_id>/`: `inclusion.json`, `models/<slug>/{gate,prep,data}`, `ablate/{chunks,results.parquet,
+blocks.json}`, `analyze/{tests,secondary,methods}.json`, `report_v3.md` (or `dev_report.md`, `smoke_report.md`).

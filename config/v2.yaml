@@ -15,11 +15,13 @@ models:                                  # replication order: the 1.7B model fir
   Qwen/Qwen3.5-4B:
     depths: [0.25, 0.4, 0.5, 0.6, 0.75]  # layers 8, 13, 16, 19, 24
     sae: {format: reins, repo: Carlos4869/REINS-SAE, folder: qwen3.5-4b-base, width: 20480,
-          layer_offset: 0, input_norm: "none"}
+          layer_offset: 0, input_norm: "rms_d"}
     # SAE setting from the model card: layer_XX.pt is "the post-residual stream of transformer layer XX" (files 00-31
-    # for 32 layers). The authors' code (github.com/Geralt1020/REINS, src/runtime.py, src/intervention.py) hooks the
-    # output of model.layers[N] and feeds raw activations; the card's "Global RMS" training normalisation is folded into
-    # the saved file by dictionary_learning (training.py: scale_biases(norm_factor) at save), so no input scaling.
+    # for 32 layers), trained with "Global RMS" normalisation. That normalisation is NOT folded into the file: on 13,052
+    # saved layer-16 chat activations (2026-11-19 confirm run) raw inputs give FVE 0.15 and L0 62, while rescaling so
+    # E||x||^2 = d (rms_d, about x4.6 at layer 16) gives FVE 0.70 and L0 103; b_dec is 3.7x the raw mean activation.
+    # POST-FREEZE CHANGE (2026-11-20): the frozen value was "none", which made the SAE fail the gate at every layer
+    # in the confirm run. Any run with this value is a recorded deviation (--deviation).
 primary_depth: 0.5
 # Layer rule: L = round(depth * num_hidden_layers) (half up), 0-indexed decoder-layer output (resid_post).
 

@@ -53,11 +53,11 @@ def load_tokenizer(model_id: str):
     return tok
 
 
-def load_model(model_id: str, device: torch.device, dtype: torch.dtype):
+def load_model(model_id: str, device: torch.device, dtype: torch.dtype, attn: str = "sdpa"):
     from transformers import AutoModelForCausalLM
 
-    LOG.info("loading %s (%s, %s, attn=sdpa)", model_id, device, dtype)
-    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, attn_implementation="sdpa")
+    LOG.info("loading %s (%s, %s, attn=%s)", model_id, device, dtype, attn)
+    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, attn_implementation=attn)
     model.to(device)
     model.eval()
     model.requires_grad_(False)
