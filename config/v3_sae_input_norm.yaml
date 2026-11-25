@@ -1,0 +1,16 @@
+# SAE input scaling per (model, layer:file) measured by `--v3 --smoke` (higher FVE of the options in config/v3.yaml input_norm_options).
+# Frozen with the preregistration; do not edit by hand.
+Qwen/Qwen3-1.7B-Base:
+  14:extra: none
+  14:main: none
+google/gemma-2-2b:
+  10:extra: none
+  10:main: none
+  13:extra: none
+  13:main: none
+  16:extra: none
+  16:main: none
+  20:extra: none
+  20:main: none
+  7:extra: none
+  7:main: none

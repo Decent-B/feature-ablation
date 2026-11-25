@@ -1,6 +1,6 @@
 # Feature-ablation pilot v3: does feature causality depend on basis, selection rule, task and model?
 
-Status: **draft** · drafted 2026-11-25
+Status: **final** · drafted 2026-11-25
 
 Generated from `prereg/v3/hypotheses.yaml` by `bash run_pilot.sh --v3 --render-prereg`; do not edit by hand.
 

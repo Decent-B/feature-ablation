@@ -2,7 +2,7 @@
 # `bash run_pilot.sh --v3 --render-prereg`, commits, and `--v3 --freeze`. Thresholds here are read by
 # src/pilot/analysis_v3.py; the design settings live in config/v3.yaml (frozen together).
 title: "Feature-ablation pilot v3: does feature causality depend on basis, selection rule, task and model?"
-status: draft
+status: final
 date_drafted: "2026-11-25"
 headline: >-
   Feature causality (how much switching off selected units damages a behaviour, beyond switching off random units in
